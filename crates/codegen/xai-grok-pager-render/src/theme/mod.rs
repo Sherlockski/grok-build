@@ -12,6 +12,7 @@
 
 pub mod cache;
 pub mod color_support;
+pub mod custom;
 pub mod env_appearance;
 mod grokday;
 mod groknight;
@@ -22,11 +23,16 @@ mod rosepine;
 pub mod system_appearance;
 mod terminal_default;
 pub mod tokyonight;
+pub mod watcher;
 
 pub use color_support::quantize;
 pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 
 /// Available theme variants.
+///
+/// Aura is NOT a builtin — it ships as a bundled file theme
+/// `assets/themes/aura.toml` (daltonmenezes/aura-theme) and is
+/// discovered via `custom::discover()` / `custom::load("aura")`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeKind {
     GrokNight = 0,
@@ -56,19 +62,18 @@ impl ThemeKind {
 
     /// Theme kinds available on the current terminal.
     ///
-    /// Filters out themes that require truecolor when the terminal
-    /// does not support it (e.g., macOS Terminal.app is 256-color).
+    /// All kinds are always listed: a terminal without truecolor still gets
+    /// them via `quantized()` (nearest 256/ANSI16 mapping), so filtering here
+    /// only ever produced a mysteriously short picker. Per-theme
+    /// `requires_truecolor` remains advisory metadata.
     pub fn available() -> &'static [ThemeKind] {
         // Two possible results — pick the right const slice based on
         // the detected color level. No heap allocation needed.
         const ALL: &[ThemeKind] = ThemeKind::ALL;
-        const NO_TRUECOLOR: &[ThemeKind] = &[ThemeKind::GrokNight, ThemeKind::GrokDay];
+        const _NO_TRUECOLOR: &[ThemeKind] = &[ThemeKind::GrokNight, ThemeKind::GrokDay];
 
-        if color_support::detect().has_truecolor() {
-            ALL
-        } else {
-            NO_TRUECOLOR
-        }
+        let _ = _NO_TRUECOLOR;
+        ALL
     }
 
     /// Human-readable display name.
@@ -136,11 +141,45 @@ impl std::str::FromStr for ThemeKind {
 /// Resolve a theme string to its canonical `&'static str` name.
 /// Used by both dispatch and registry layers.
 pub fn canonical_name(value: &str) -> Option<&'static str> {
-    ThemeKind::from_name(value).map(|k| k.display_name())
+    if let Some(k) = ThemeKind::from_name(value) {
+        return Some(k.display_name());
+    }
+    // custom themes: check if known; return leaked static for compat
+    // (callers only use for equality — use `canonical_name_owned` for owned).
+    if crate::theme::custom::is_known(value) {
+        // leak the lowercased name to get &'static str — bounded by theme count
+        return Some(Box::leak(value.to_ascii_lowercase().into_boxed_str()) as &str);
+    }
+    None
+}
+
+/// Owned variant of `canonical_name` for custom themes.
+pub fn canonical_name_owned(value: &str) -> Option<String> {
+    if let Some(k) = ThemeKind::from_name(value) {
+        return Some(k.display_name().to_string());
+    }
+    if crate::theme::custom::is_known(value) {
+        return Some(value.to_ascii_lowercase());
+    }
+    None
+}
+
+/// All available theme canonical names (builtin + custom + auto).
+pub fn all_canonical_names() -> Vec<String> {
+    let mut out: Vec<String> = ThemeKind::ALL.iter().map(|k| k.display_name().to_string()).collect();
+    out.push("auto".to_string());
+    for c in crate::theme::custom::discover() {
+        if !out.contains(&c.name) {
+            out.push(c.name);
+        }
+    }
+    out.sort();
+    out
 }
 
 /// Human-friendly display name for a canonical theme value (e.g.
 /// `"groknight"` → `"Grok Night"`). Falls back to `value` verbatim.
+/// Aura is a file theme → also handled via the `other` branch.
 pub fn display_name_for_canonical(value: &str) -> &str {
     match value {
         "auto" => "Auto",
@@ -148,7 +187,17 @@ pub fn display_name_for_canonical(value: &str) -> &str {
         "grokday" => "Grok Day",
         "tokyonight" => "Tokyo Night",
         "rosepine-moon" => "Rose Pine Moon",
-        other => other,
+        other => {
+            if crate::theme::custom::is_known(other) {
+                let display = crate::theme::custom::discover()
+                    .into_iter()
+                    .find(|c| c.name == other.to_ascii_lowercase())
+                    .map(|c| c.display)
+                    .unwrap_or_else(|| other.to_string());
+                return Box::leak(display.into_boxed_str()) as &str;
+            }
+            other
+        }
     }
 }
 
@@ -268,6 +317,23 @@ impl Theme {
         if cache::terminal_native_locked() {
             return Self::terminal_default().quantized(level);
         }
+        if let Some(custom) = cache::custom_theme() {
+            let dark = custom.is_dark();
+            let adapted = if cfg!(target_os = "windows") {
+                custom.windows_contrast_boost(dark)
+            } else {
+                custom
+            };
+            let adapted = adapted.quantized(level);
+            if level.has_color()
+                && (level == color_support::ColorLevel::Basic
+                    || (crate::glyphs::is_legacy_windows_console() && !level.has_truecolor()))
+            {
+                return adapted.ansi16_chrome_overrides(dark);
+            } else {
+                return adapted;
+            }
+        }
         let base = match cache::current_kind() {
             ThemeKind::GrokNight => Self::groknight(),
             ThemeKind::TokyoNight => Self::tokyonight(),
@@ -328,23 +394,35 @@ impl Theme {
     /// Used by the dispatcher, live-preview, and the appearance watcher.
     ///
     /// No-op while the terminal-native lock is engaged.
+    ///
+    /// Deliberately does NOT clamp truecolor themes to GrokNight: the old
+    /// silent clamp meant picking TokyoNight/Aura on a terminal whose
+    /// `COLORTERM` was missing left the background unchanged (looked like
+    /// "theme switching is broken"). `quantized()` degrades gracefully.
     pub fn apply_kind(kind: ThemeKind) -> ThemeKind {
         if cache::terminal_native_locked() {
             return cache::current_kind();
         }
-        let effective = Self::clamp_to_terminal(kind);
-        cache::set(effective);
+        cache::set(kind);
         apply_cursor_color();
-        effective
+        kind
     }
 
-    /// Clamp a theme kind to what the terminal supports.
-    fn clamp_to_terminal(kind: ThemeKind) -> ThemeKind {
-        if kind.requires_truecolor() && !color_support::detect().has_truecolor() {
-            ThemeKind::GrokNight
-        } else {
-            kind
+    /// Apply a custom theme by name (in-memory, live).
+    pub fn apply_custom(name: &str, theme: crate::theme::tokyonight::Theme) -> String {
+        if cache::terminal_native_locked() {
+            return cache::current_name();
         }
+        let lower = name.to_ascii_lowercase();
+        cache::set_custom(lower.clone(), theme);
+        apply_cursor_color();
+        tracing::info!(theme = %lower, "Theme::apply_custom live-applied");
+        lower
+    }
+
+    /// Current theme name (lowercase canonical, includes custom).
+    pub fn current_name() -> String {
+        cache::current_name()
     }
 
     /// Push structural colors further from `bg_base` so they survive

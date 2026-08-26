@@ -5,7 +5,7 @@ use super::render::int_step_sizes;
 use super::state::{
     RowEntry, SettingsKeyOutcome, SettingsModalState, SettingsMode, SettingsModeKind,
     action_for_bool, action_for_enum, action_for_enum_commit, action_for_int, action_for_string,
-    effective_enum_choices, group_children, validate_string,
+    action_for_theme_preview, effective_enum_choices, group_children, validate_string,
 };
 use crate::app::actions::Action;
 use crate::input::line_editor::LineEditOutcome;
@@ -154,9 +154,15 @@ fn handle_picking_enum(state: &mut SettingsModalState, key: &KeyEvent) -> Settin
             if !close {
                 state.transition_to_browse();
             }
-            if let SettingValue::Enum(orig) = &original_value
-                && let Some(action) = action_for_enum(setting_key, orig)
-            {
+            // Revert is a PREVIEW of the original value (upstream contract):
+            // visual-only, no persist/toast. Theme family originals are
+            // Strings (DynamicEnum); everything else static Enums.
+            let revert = match &original_value {
+                SettingValue::Enum(orig) => action_for_enum(setting_key, orig),
+                SettingValue::String(s) => action_for_theme_preview(setting_key, s.clone()),
+                _ => None,
+            };
+            if let Some(action) = revert {
                 return if close {
                     SettingsKeyOutcome::ActionThenClose(action)
                 } else {
@@ -175,14 +181,20 @@ fn handle_picking_enum(state: &mut SettingsModalState, key: &KeyEvent) -> Settin
             if key.modifiers.is_empty() && !crate::settings::is_consent_chooser(setting_key) =>
         {
             state.transition_to_browse();
-            if supports_preview
-                && let SettingValue::Enum(orig) = &original_value
-                && let Some(revert) = action_for_enum(setting_key, orig)
-            {
-                return SettingsKeyOutcome::ActionPair(
-                    revert,
-                    Action::OpenResetConfirm { key: setting_key },
-                );
+            if supports_preview {
+                let revert = match &original_value {
+                    SettingValue::Enum(orig) => action_for_enum(setting_key, orig),
+                    SettingValue::String(s) => {
+                        action_for_theme_preview(setting_key, s.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(revert) = revert {
+                    return SettingsKeyOutcome::ActionPair(
+                        revert,
+                        Action::OpenResetConfirm { key: setting_key },
+                    );
+                }
             }
             SettingsKeyOutcome::Action(Action::OpenResetConfirm { key: setting_key })
         }
@@ -254,16 +266,29 @@ pub(super) fn set_picker_idx(
 ) -> SettingsKeyOutcome {
     let in_bounds = new_idx < picker_choices_len(state, setting_key);
     if !in_bounds {
-        // The caller bounds-checks already; this re-check protects a future caller that does not
         return SettingsKeyOutcome::Unchanged;
     }
     state.transition_to_picking_enum(setting_key, new_idx, original_value, supports_preview);
-    // Preview dispatch for static Enums with preview support.
-    if supports_preview
-        && let Some(new_canonical) = picker_choice_at(state, setting_key, new_idx)
-        && let Some(action) = action_for_enum(setting_key, new_canonical)
-    {
-        return SettingsKeyOutcome::Action(action);
+    if supports_preview {
+        // DynamicEnum (theme family): canonicals are owned Strings —
+        // preview via the dedicated Preview* resolver (upstream
+        // `action_for_enum` contract). Static Enums keep the
+        // `&'static str` path.
+        let is_dynamic = matches!(
+            state.registry.find(setting_key).map(|m| &m.kind),
+            Some(SettingKind::DynamicEnum { .. })
+        );
+        if is_dynamic {
+            if let Some(canonical) = picker_choice_at_owned(state, setting_key, new_idx)
+                && let Some(action) = action_for_theme_preview(setting_key, canonical)
+            {
+                return SettingsKeyOutcome::Action(action);
+            }
+        } else if let Some(new_canonical) = picker_choice_at(state, setting_key, new_idx)
+            && let Some(action) = action_for_enum(setting_key, new_canonical)
+        {
+            return SettingsKeyOutcome::Action(action);
+        }
     }
     SettingsKeyOutcome::Changed
 }

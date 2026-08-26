@@ -1181,29 +1181,20 @@ pub(crate) async fn persist_setting(
                 .await
                 .map_err(|e| e.to_string())
         }
-        "theme" => {
-            let SettingValue::Enum(s) = value else {
-                return Err(kind_mismatch("theme", "Enum", &value));
+        "theme" | "auto_dark_theme" | "auto_light_theme" => {
+            // DynamicEnum (String) for custom themes, fallback Enum for builtins
+            let s = match &value {
+                SettingValue::String(s) => s.clone(),
+                SettingValue::Enum(s) => s.to_string(),
+                _ => return Err(kind_mismatch("theme", "String|Enum", &value)),
             };
-            xai_grok_shell::util::config::set_theme(s.to_string())
-                .await
-                .map_err(|e| e.to_string())
-        }
-        "auto_dark_theme" => {
-            let SettingValue::Enum(s) = value else {
-                return Err(kind_mismatch("auto_dark_theme", "Enum", &value));
-            };
-            xai_grok_shell::util::config::set_auto_dark_theme(s.to_string())
-                .await
-                .map_err(|e| e.to_string())
-        }
-        "auto_light_theme" => {
-            let SettingValue::Enum(s) = value else {
-                return Err(kind_mismatch("auto_light_theme", "Enum", &value));
-            };
-            xai_grok_shell::util::config::set_auto_light_theme(s.to_string())
-                .await
-                .map_err(|e| e.to_string())
+            match key {
+                "theme" => xai_grok_shell::util::config::set_theme(s).await.map_err(|e| e.to_string())?,
+                "auto_dark_theme" => xai_grok_shell::util::config::set_auto_dark_theme(s).await.map_err(|e| e.to_string())?,
+                "auto_light_theme" => xai_grok_shell::util::config::set_auto_light_theme(s).await.map_err(|e| e.to_string())?,
+                _ => unreachable!(),
+            }
+            Ok(())
         }
         "default_model" => {
             let SettingValue::String(s) = value else {

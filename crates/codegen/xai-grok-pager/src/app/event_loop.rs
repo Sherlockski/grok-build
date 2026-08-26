@@ -2099,6 +2099,13 @@ pub(crate) async fn run(
     debug_assert_eq!(term_state.initial_theme, theme_cache::current_kind());
     let mut appearance_watcher =
         SystemAppearanceWatcher::start_if_auto(theme_cache::is_auto_mode());
+    let mut theme_watcher = xai_grok_pager_render::theme::watcher::ThemeWatcher::start().ok();
+    if let Some(w) = theme_watcher.as_mut() {
+        // Consume the arming burst (pre-existing files reported as events)
+        // so the first user action can't consume a STALE PointerChanged.
+        w.settle().await;
+    }
+    tracing::info!("theme watcher started");
 
     // Registered so the signal handler can request a graceful quit; see signal_handler.
     let quit_notify = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -2764,6 +2771,46 @@ pub(crate) async fn run(
             }
 
             _ = load_barrier_tick => {}
+
+            // Hot-reload: custom theme pointer / theme files live-reload.
+            Ok(ev) = async {
+                if let Some(ref mut w) = theme_watcher { w.changed().await } else { std::future::pending().await }
+            } => {
+                use xai_grok_pager_render::theme::watcher::ThemeWatcherEvent;
+                match ev {
+                    ThemeWatcherEvent::PointerChanged(name) => {
+                        tracing::info!(theme = %name, "theme pointer live-reload");
+                        // apply pointer target (builtin or custom)
+                        if let Some(kind) = ThemeKind::from_name(&name) {
+                            let eff = Theme::apply_kind(kind);
+                            tracing::info!(theme = %eff.display_name(), "theme pointer switched to builtin");
+                        } else if let Some(t) = xai_grok_pager_render::theme::custom::load(&name) {
+                            Theme::apply_custom(&name, t);
+                            tracing::info!(theme = %name, "theme pointer switched to custom");
+                        } else {
+                            tracing::warn!(theme = %name, "theme pointer points to unknown theme");
+                        }
+                        presenter.request(false);
+                    }
+                    ThemeWatcherEvent::ThemeFileChanged(name) => {
+                        // if active theme file changed, hot-reload it
+                        let active = theme_cache::current_name();
+                        if name == active {
+                            if let Some(t) = xai_grok_pager_render::theme::custom::load(&name) {
+                                Theme::apply_custom(&name, t);
+                                tracing::info!(theme = %name, "active custom theme live-reloaded");
+                                presenter.request(false);
+                            }
+                        } else {
+                            tracing::debug!(changed = %name, active = %active, "custom theme file changed (not active)");
+                        }
+                    }
+                    ThemeWatcherEvent::ThemeListChanged => {
+                        tracing::info!("theme list changed (custom file added/removed) — picker will refresh on next open");
+                        // no immediate visual change; picker reads discover() live
+                    }
+                }
+            }
 
             // Hot-reload: config file changed (dev mode) or initial load.
             Ok(()) = config_watcher.changed() => {

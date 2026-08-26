@@ -715,13 +715,13 @@ pub fn default_settings() -> Vec<SettingMeta> {
             restart_required: false,
             hidden_in_minimal: false,
         },
-        // --- theme and auto themes -------------------------------------------
+        // --- theme + auto themes (DynamicEnum so custom file themes appear) ---
         SettingMeta {
             key: "theme",
             category: SettingCategory::Appearance,
             owner: SettingOwner::Shared,
             label: "Theme",
-            description: "Color theme for the pager UI.",
+            description: "Color theme for the pager UI. Custom themes from ~/.grok/themes/ appear here.",
             keywords: &[
                 "theme",
                 "color",
@@ -731,10 +731,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 "dark",
                 "light",
             ],
-            kind: SettingKind::Enum {
-                // `Option<String>`: `None` resolves to "groknight"
+            kind: SettingKind::DynamicEnum {
                 default: "groknight",
-                choices: THEME_CHOICES,
+                source: crate::settings::DynamicEnumSource::ThemeCatalog,
                 supports_preview: true,
             },
             restart_required: false,
@@ -747,10 +746,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             label: "Auto dark theme",
             description: "Theme to use when the system is in dark mode (only with theme=auto).",
             keywords: &["auto", "dark", "theme", "system", "appearance", "night"],
-            kind: SettingKind::Enum {
-                // `Option<String>`: `None` falls back to "groknight"
+            kind: SettingKind::DynamicEnum {
                 default: "groknight",
-                choices: CONCRETE_THEME_CHOICES,
+                source: crate::settings::DynamicEnumSource::ConcreteThemeCatalog,
                 supports_preview: true,
             },
             restart_required: false,
@@ -763,10 +761,9 @@ pub fn default_settings() -> Vec<SettingMeta> {
             label: "Auto light theme",
             description: "Theme to use when the system is in light mode (only with theme=auto).",
             keywords: &["auto", "light", "theme", "system", "appearance", "day"],
-            kind: SettingKind::Enum {
-                // `Option<String>`: `None` falls back to "grokday"
+            kind: SettingKind::DynamicEnum {
                 default: "grokday",
-                choices: CONCRETE_THEME_CHOICES,
+                source: crate::settings::DynamicEnumSource::ConcreteThemeCatalog,
                 supports_preview: true,
             },
             restart_required: false,

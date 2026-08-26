@@ -35,33 +35,42 @@ impl SlashCommand for ThemeCommand {
     }
 
     fn preview_state(&self) -> Option<String> {
-        Some(Theme::current_kind().display_name().to_string())
+        Some(Theme::current_name())
     }
 
     fn preview_arg(&self, arg: &str) {
+        crate::theme::custom::mark_preview();
         if let Some(kind) = ThemeKind::from_name(arg) {
             if kind.is_auto() {
-                // Preview the theme that auto mode would resolve to.
                 let resolved = theme_cache::resolve_auto();
                 Theme::apply_kind(resolved);
             } else {
                 Theme::apply_kind(kind);
             }
+            return;
+        }
+        // custom file theme
+        if let Some(t) = crate::theme::custom::load(arg) {
+            Theme::apply_custom(arg, t);
         }
     }
 
     fn cancel_preview(&self, previous: &str) {
+        crate::theme::custom::mark_preview();
         if let Some(kind) = ThemeKind::from_name(previous) {
             Theme::apply_kind(kind);
+            return;
+        }
+        if let Some(t) = crate::theme::custom::load(previous) {
+            Theme::apply_custom(previous, t);
         }
     }
 
     fn suggest_args(&self, _ctx: &AppCtx, _args_query: &str) -> Option<Vec<ArgItem>> {
-        let current = Theme::current_kind();
+        let current_name = Theme::current_name();
         let is_auto = theme_cache::is_auto_mode();
         let available = ThemeKind::available();
 
-        // Prepend "auto" (follow system appearance) as the first option.
         let auto_active = if is_auto { " (active)" } else { "" };
         let mut items = vec![ArgItem {
             display: "auto".to_string(),
@@ -70,20 +79,32 @@ impl SlashCommand for ThemeCommand {
             description: format!("auto (follow system){auto_active}"),
         }];
 
-        // Concrete themes: only show "(active)" when not in auto mode
+        // Builtin themes
         items.extend(available.iter().map(|kind| {
-            let active = if *kind == current && !is_auto {
-                " (active)"
-            } else {
-                ""
-            };
+            let name = kind.display_name();
+            let active = if name == current_name && !is_auto { " (active)" } else { "" };
             ArgItem {
-                display: kind.display_name().to_string(),
-                match_text: kind.display_name().to_string(),
-                insert_text: kind.display_name().to_string(),
-                description: format!("{}{active}", kind.display_name()),
+                display: name.to_string(),
+                match_text: name.to_string(),
+                insert_text: name.to_string(),
+                description: format!("{name}{active}"),
             }
         }));
+        // Custom file themes
+        for m in crate::theme::custom::discover() {
+            let active = if m.name == current_name && !is_auto { " (active)" } else { "" };
+            let desc = if m.description.is_empty() {
+                format!("custom{}", active)
+            } else {
+                format!("{}{}", m.description, active)
+            };
+            items.push(ArgItem {
+                display: m.display.clone(),
+                match_text: m.name.clone(),
+                insert_text: m.name.clone(),
+                description: desc,
+            });
+        }
 
         Some(items)
     }
@@ -92,32 +113,29 @@ impl SlashCommand for ThemeCommand {
         let trimmed = args.trim();
         let available = ThemeKind::available();
 
-        // No args: toggle between available themes.
         if trimmed.is_empty() {
+            // Toggle next builtin
             let current = Theme::current_kind();
             let current_idx = available.iter().position(|k| *k == current).unwrap_or(0);
             let next = available[(current_idx + 1) % available.len()];
-
             return CommandResult::Action(Action::SetTheme(next.display_name().to_string()));
         }
 
-        // Named theme (including "auto"): parse and dispatch.
-        // Truecolor-only themes are accepted on any terminal; `Theme::apply_kind` clamps the live colors as needed
-        match ThemeKind::from_name(trimmed) {
-            Some(kind) => {
-                // An alias normalises to the canonical `display_name`
-                CommandResult::Action(Action::SetTheme(kind.display_name().to_string()))
-            }
-            None => {
-                let all_names: Vec<&str> =
-                    ThemeKind::ALL.iter().map(|k| k.display_name()).collect();
-                CommandResult::Error(format!(
-                    "Unknown theme: {}. Available: auto, {}",
-                    trimmed,
-                    all_names.join(", ")
-                ))
-            }
+        if let Some(kind) = ThemeKind::from_name(trimmed) {
+            return CommandResult::Action(Action::SetTheme(kind.display_name().to_string()));
         }
+        if crate::theme::custom::is_known(trimmed) {
+            return CommandResult::Action(Action::SetTheme(trimmed.to_ascii_lowercase()));
+        }
+        let mut all_names: Vec<String> =
+            ThemeKind::ALL.iter().map(|k| k.display_name().to_string()).collect();
+        all_names.extend(crate::theme::custom::all_names());
+        all_names.sort();
+        CommandResult::Error(format!(
+            "Unknown theme: {}. Available: auto, {}",
+            trimmed,
+            all_names.join(", ")
+        ))
     }
 }
 
@@ -164,8 +182,21 @@ mod tests {
             let items = cmd.suggest_args(&ctx, "").expect("should return items");
             assert_eq!(items[0].insert_text, "auto");
             assert!(items[0].description.contains("follow system"));
-            // The "auto" entry plus every available concrete theme
-            assert_eq!(items.len(), ThemeKind::available().len() + 1);
+            // auto + all available builtin themes + every discovered
+            // custom file theme (bundled aura.toml ships with the
+            // binary; user themes under $GROK_HOME/themes add more).
+            let custom_count = crate::theme::custom::discover()
+                .iter()
+                .filter(|m| {
+                    ThemeKind::ALL.iter().all(|k| k.display_name() != m.name)
+                })
+                .count();
+            assert_eq!(
+                items.len(),
+                ThemeKind::available().len() + 1 + custom_count,
+                "auto + builtins + customs (got {:?})",
+                items.iter().map(|i| i.insert_text.clone()).collect::<Vec<_>>(),
+            );
         });
     }
 

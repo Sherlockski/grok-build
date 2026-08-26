@@ -982,6 +982,17 @@ pub(super) fn action_for_string(
     snapshot: &PagerLocalSnapshot,
 ) -> Option<Action> {
     match key {
+        // Theme family is DynamicEnum (String canonicals): this is its
+        // COMMIT resolver, mirroring upstream `action_for_enum_commit`.
+        // Called only from the picker's Enter path. Preview/Esc-revert
+        // must use [`action_for_theme_preview`] instead — dispatching
+        // Set* on revert persists + toasts and fights live preview
+        // (observed as background flashing while navigating).
+        // Empty string is not a valid theme (there is no "clear"
+        // sentinel) → None so Enter on a blank entry no-ops.
+        "theme" if !value.is_empty() => Some(Action::SetTheme(value)),
+        "auto_dark_theme" if !value.is_empty() => Some(Action::SetAutoDarkTheme(value)),
+        "auto_light_theme" if !value.is_empty() => Some(Action::SetAutoLightTheme(value)),
         "default_model" => {
             if value.is_empty() {
                 Some(Action::ClearDefaultModel)
@@ -1006,6 +1017,23 @@ pub(super) fn action_for_string(
             let _ = snapshot;
             None
         }
+    }
+}
+
+/// Preview resolver for DynamicEnum settings whose canonicals are owned
+/// strings (the theme family). Owned-string analog of [`action_for_enum`]:
+/// returns visual-only `Preview*` actions — never persist, never toast.
+///
+/// Used by the picker on Up/Down navigation (live preview of the
+/// highlighted theme) and on Esc / `d`-reset (revert to the previously
+/// CONFIRMED theme without a disk write). Committing remains Enter's
+/// job via [`action_for_string`] → `Set*`.
+pub(super) fn action_for_theme_preview(key: SettingKey, value: String) -> Option<Action> {
+    match key {
+        "theme" => Some(Action::PreviewTheme(value)),
+        "auto_dark_theme" => Some(Action::PreviewAutoDarkTheme(value)),
+        "auto_light_theme" => Some(Action::PreviewAutoLightTheme(value)),
+        _ => None,
     }
 }
 

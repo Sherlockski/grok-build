@@ -734,15 +734,26 @@ pub(in crate::app::dispatch) fn action_for_reset(
             Some(Action::SetDefaultSelectedPermission((*s).to_owned()))
         }
         ("theme", SettingValue::Enum(s)) => Some(Action::SetTheme((*s).to_owned())),
+        ("theme", SettingValue::String(s)) => Some(Action::SetTheme(s.clone())),
         ("auto_dark_theme", SettingValue::Enum(s)) => {
             Some(Action::SetAutoDarkTheme((*s).to_owned()))
+        }
+        ("auto_dark_theme", SettingValue::String(s)) => {
+            Some(Action::SetAutoDarkTheme(s.clone()))
         }
         ("auto_light_theme", SettingValue::Enum(s)) => {
             Some(Action::SetAutoLightTheme((*s).to_owned()))
         }
-        // One arm per canonical, all dispatched through the typed `Action::SetPermissionMode(kind)`, not the legacy `Action::SetYoloMode(bool)`
-        // The reset path is modal-initiated (the `d` reset key is part of the settings modal)
-        // It follows the same "modal commit uses the typed setter" rule as the picker Enter path
+        ("auto_light_theme", SettingValue::String(s)) => {
+            Some(Action::SetAutoLightTheme(s.clone()))
+        }
+        // Three explicit arms, one per
+        // canonical, all dispatched through the typed
+        // `Action::SetPermissionMode(kind)` (NOT the legacy
+        // `Action::SetYoloMode(bool)`). The reset path IS modal-
+        // initiated (the `d` reset key is part of the
+        // settings modal), so it falls under the same "modal commit
+        // ↦ typed setter" rule as the picker Enter path.
         //
         // The registered default is "ask" today (defs.rs: `SettingKind::Enum { default: "ask", ... }`).
         // Only that arm is reachable through the normal reset flow
@@ -889,6 +900,7 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
         }
         ("respect_manual_folds", SettingValue::Bool(b)) => set_respect_manual_folds_inner(app, *b),
         ("theme", SettingValue::Enum(s)) => set_theme_inner(app, s),
+        ("theme", SettingValue::String(s)) => set_theme_inner(app, s),
         ("default_selected_permission", SettingValue::Enum(s)) => {
             set_default_selected_permission_inner(
                 app,
@@ -929,8 +941,11 @@ pub(in crate::app::dispatch) fn apply_setting_rollback(
             );
         }
         ("auto_dark_theme", SettingValue::Enum(s)) => set_auto_dark_theme_inner(app, s),
+        ("auto_dark_theme", SettingValue::String(s)) => set_auto_dark_theme_inner(app, s),
         ("auto_light_theme", SettingValue::Enum(s)) => set_auto_light_theme_inner(app, s),
-        // permission_mode rollback: recover the kind from the canonical, run the inner, then restore the canonical the inner collapsed
+        ("auto_light_theme", SettingValue::String(s)) => set_auto_light_theme_inner(app, s),
+        // permission_mode rollback: recover kind from canonical,
+        // run inner, then restore the canonical the inner collapsed.
         ("permission_mode", SettingValue::Enum(s)) => {
             use crate::app::actions::PermissionModeKind;
             let kind = match PermissionModeKind::from_canonical(s) {

@@ -93,6 +93,29 @@ fn detect_raw() -> ColorLevel {
             return ColorLevel::None;
         }
 
+        // Explicit opt-IN via GROK_FORCE_COLOR_LEVEL wins over every
+        // heuristic. Escape hatch for SSH/tmux sessions where COLORTERM
+        // is stripped and the terminal brand can't be identified —
+        // without this, all dark themes' backgrounds quantize onto the
+        // same gray-ramp entries (#141414 and #15141b BOTH land on
+        // xterm 233 = #121212) and switching themes appears to do
+        // nothing to the background.
+        if let Some(raw) = std::env::var_os("GROK_FORCE_COLOR_LEVEL") {
+            match parse_force_level(&raw.to_string_lossy()) {
+                Some(level) => {
+                    tracing::info!(level = %level, "color level forced via GROK_FORCE_COLOR_LEVEL");
+                    return level;
+                }
+                None => {
+                    tracing::warn!(
+                        value = %raw.to_string_lossy(),
+                        valid = "none|basic|16|256|ansi256|truecolor|24bit",
+                        "invalid GROK_FORCE_COLOR_LEVEL — ignoring"
+                    );
+                }
+            }
+        }
+
         let level = match supports_color::on(supports_color::Stream::Stdout) {
             Some(level) => {
                 if level.has_16m {
@@ -112,13 +135,63 @@ fn detect_raw() -> ColorLevel {
         // The `supports-color` crate relies on COLORTERM=truecolor, but
         // tmux/SSH/mosh often strip that variable.  When the crate reports
         // only 256-color support, upgrade to TrueColor if we can identify
-        // the terminal emulator and know it handles 24-bit RGB.
-        if level < ColorLevel::TrueColor && terminal_supports_truecolor() {
+        // the terminal emulator and know it handles 24-bit RGB. Two
+        // identification layers: the terminal brand (env probed locally)
+        // and the TERM value itself — the latter matters over SSH, where
+        // COLORTERM/TERM_PROGRAM are stripped but TERM (xterm-kitty,
+        // xterm-ghostty, wezterm, alacritty…) still propagates.
+        if level < ColorLevel::TrueColor
+            && (terminal_supports_truecolor() || term_pattern_implies_truecolor_from(
+                std::env::var_os("TERM").as_deref().map(|v| v.to_string_lossy()).as_deref(),
+            ))
+        {
             return ColorLevel::TrueColor;
         }
 
         level
     })
+}
+
+/// Parse a [`GROK_FORCE_COLOR_LEVEL`](Self) override value.
+///
+/// Accepts the canonical spellings from [`ColorLevel::as_str`] plus
+/// common aliases. Returns `None` for unrecognized values (caller logs
+/// a warning and falls through to heuristic detection).
+pub(crate) fn parse_force_level(raw: &str) -> Option<ColorLevel> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "none" | "off" | "0" => Some(ColorLevel::None),
+        "basic" | "16" | "ansi" | "ansi16" => Some(ColorLevel::Basic),
+        "256" | "ansi256" | "8bit" | "8-bit" => Some(ColorLevel::Ansi256),
+        "truecolor" | "24bit" | "24-bit" | "rgb" | "16m" => Some(ColorLevel::TrueColor),
+        _ => None,
+    }
+}
+
+/// TERM-value patterns that imply 24-bit color support.
+///
+/// Unlike `COLORTERM`, the `TERM` variable survives SSH, so these catch
+/// remote sessions from terminals whose emulators set distinctive TERM
+/// values. Pure function of the TERM string for testability.
+fn term_pattern_implies_truecolor_from(term: Option<&str>) -> bool {
+    let Some(term) = term else {
+        return false;
+    };
+    let term = term.to_ascii_lowercase();
+    [
+        "truecolor",
+        "24bit",
+        "xterm-kitty",
+        "kitty",
+        "alacritty",
+        "wezterm",
+        "xterm-ghostty",
+        "ghostty",
+        "foot",
+        "contour",
+        "rio",
+    ]
+    .iter()
+    .any(|pattern| term.contains(pattern))
 }
 
 /// Standalone diagnostic color evidence.
@@ -499,6 +572,57 @@ mod tests {
         assert!(ColorLevel::None < ColorLevel::Basic);
         assert!(ColorLevel::Basic < ColorLevel::Ansi256);
         assert!(ColorLevel::Ansi256 < ColorLevel::TrueColor);
+    }
+
+    #[test]
+    fn parse_force_level_accepts_all_canonical_and_aliases() {
+        assert_eq!(parse_force_level("none"), Some(ColorLevel::None));
+        assert_eq!(parse_force_level("off"), Some(ColorLevel::None));
+        assert_eq!(parse_force_level("basic"), Some(ColorLevel::Basic));
+        assert_eq!(parse_force_level("16"), Some(ColorLevel::Basic));
+        assert_eq!(parse_force_level("ansi16"), Some(ColorLevel::Basic));
+        assert_eq!(parse_force_level("256"), Some(ColorLevel::Ansi256));
+        assert_eq!(parse_force_level("ansi256"), Some(ColorLevel::Ansi256));
+        assert_eq!(parse_force_level("truecolor"), Some(ColorLevel::TrueColor));
+        assert_eq!(parse_force_level("24bit"), Some(ColorLevel::TrueColor));
+        // Case-insensitive + whitespace-tolerant.
+        assert_eq!(
+            parse_force_level("  TrueColor  "),
+            Some(ColorLevel::TrueColor)
+        );
+        // Unknown values → None (caller falls through to heuristics).
+        assert_eq!(parse_force_level("bogus"), None);
+        assert_eq!(parse_force_level(""), None);
+    }
+
+    #[test]
+    fn term_pattern_implies_truecolor_for_known_emulators() {
+        // Distinctive TERM values that survive SSH.
+        for term in [
+            "xterm-kitty",
+            "kitty",
+            "alacritty",
+            "wezterm",
+            "xterm-ghostty",
+            "foot",
+            "contour",
+            "xterm-truecolor",
+        ] {
+            assert!(
+                term_pattern_implies_truecolor_from(Some(term)),
+                "TERM={term} must imply truecolor"
+            );
+        }
+        // Generic/ambiguous TERM values must NOT upgrade — the terminal
+        // may genuinely be 256-only (e.g. Apple Terminal.app reports
+        // xterm-256color and cannot render SGR 38;2).
+        for term in ["xterm-256color", "screen", "tmux-256color", "xterm"] {
+            assert!(
+                !term_pattern_implies_truecolor_from(Some(term)),
+                "TERM={term} must not imply truecolor"
+            );
+        }
+        assert!(!term_pattern_implies_truecolor_from(None));
     }
 
     #[test]
