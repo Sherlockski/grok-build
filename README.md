@@ -41,12 +41,16 @@ for the version of the code present in this tree.
 
 ## Live-reloading config-file based themes
 
-Grok ships **Aura** (daltonmenezes/aura-theme) as a bundled file theme, and you
-can add your own themes as plain config files — no rebuild required. Anything in
-the theme directory is picked up automatically, appears in `/theme` and the
-settings picker (Settings → Appearance → Theme), and **hot-reloads live** while
-grok is running: edit a theme file and the UI recolors immediately; edit the
-pointer file to switch themes without touching the app.
+Themes are plain config files under your grok home — no rebuild required.
+**Grok ships none**: everything in the picker beyond the six built-ins is
+there because you put it in `themes/`. Files are discovered automatically,
+appear in `/theme` and the settings picker (Settings → Appearance → Theme),
+are resolved at launch from `[ui].theme` or the pointer file, and
+**hot-reload live** while grok is running — edit a theme file and the UI
+recolors immediately, no restart.
+
+An example port of **Aura Dark** (daltonmenezes/aura-theme) is included at the
+bottom of this section; save it as `~/.grok/themes/aura.toml` to use it.
 
 ### Layout
 
@@ -112,16 +116,13 @@ Color literals: `#rrggbb`, `#rgb`, `#rrggbbaa` (alpha composited at parse),
 named ANSI (`red`, `lightblue`, `darkgray`, …), `idx:N` for xterm-256 indices,
 or `none`/`reset`.
 
-Grok ships **no** file themes — everything in the picker beyond the built-ins
-is there because you put it in `themes/`.
-
 ### Selecting a theme
 
 - **Slash command:** `/theme my-theme` (Tab completes custom themes). Bare
   `/theme` cycles built-ins.
 - **Settings modal:** Settings → Appearance → Theme; custom themes appear
   alongside the built-ins. Arrow keys preview live, Enter commits, Esc reverts.
-- **Config:** `[ui].theme = "my-theme"` in `config.toml`.
+- **Config:** `[ui].theme = "my-theme"` in `config.toml` — applied at launch.
 - **Pointer file:** write `active = "…"` to `themes/config.toml` — even while
   grok is running. It switches within ~120 ms, no restart.
 - **Env:** `GROK_THEME=my-theme grok`.
@@ -140,6 +141,101 @@ so the two stay consistent.
 - If backgrounds look wrong over SSH/tmux, truecolor detection may be degraded
   — force it with `COLORTERM=truecolor` or `GROK_FORCE_COLOR_LEVEL=truecolor`
   (also accepts `none`/`basic`/`256`).
+
+### Example: Aura Dark
+
+Full port of [daltonmenezes/aura-theme](https://github.com/daltonmenezes/aura-theme)
+(hexes verbatim from its VS Code / color-palette sources). Save as
+`~/.grok/themes/aura.toml`, then `/theme aura`.
+
+<details><summary>aura.toml</summary>
+
+```toml
+[meta]
+display = "Aura"
+description = "Dark purple — aura theme port."
+requires_truecolor = true
+
+[theme]
+bg_base = "#15141b"
+bg_light = "#2e2b38"
+bg_dark = "#110f18"
+bg_highlight = "#3b334b"
+bg_hover = "#3b334b"
+bg_terminal = "#15141b"
+
+accent_user = "#a277ff"
+accent_assistant = "#f694ff"
+accent_thinking = "#6d6d6d"
+accent_tool = "#525156"
+accent_system = "#82e2ff"
+accent_error = "#ff6767"
+accent_success = "#61ffca"
+accent_running = "#a277ff"
+accent_skill = "#f694ff"
+
+text_primary = "#edecee"
+text_secondary = "#cdccce"
+
+gray_dim = "#4d4d4d"
+gray = "#6d6d6d"
+gray_bright = "#adacae"
+
+command = "#ffca85"
+path = "#82e2ff"
+running = "#61ffca"
+warning = "#ffca85"
+
+fuzzy_accent = "#a277ff"
+accent_plan = "#ffca85"
+accent_verify = "#a277ff"
+accent_remember = "#61ffca"
+
+selection_border = "#3d375e"
+hover_border = "#3b334b"
+prompt_border = "#3b334b"
+prompt_border_active = "#a277ff"
+
+accent_model = "#61ffca"
+
+scrollbar_bg = "#121016"
+scrollbar_fg = "#312e46"
+
+diff_delete_bg = "#321a25"
+diff_delete_fg = "#ff6767"
+diff_insert_bg = "#122c29"
+diff_insert_fg = "#61ffca"
+diff_equal_fg = "#6d6d6d"
+diff_gutter_fg = "#4d4d4d"
+
+bg_visual = "#3d375e"
+
+paste_bg = "#121016"
+paste_fg = "#cdccce"
+paste_dim = "#6d6d6d"
+
+md_heading_h1 = "#a277ff"
+md_heading_h1_mod = "bold"
+md_heading_h2 = "#f694ff"
+md_heading_h2_mod = "bold"
+md_heading_h3 = "#82e2ff"
+md_heading_h3_mod = "bold"
+md_heading_h4 = "#61ffca"
+md_heading_h4_mod = "bold"
+md_heading_h5 = "#ffca85"
+md_heading_h5_mod = "bold"
+md_heading_h6 = "#6d6d6d"
+md_heading_h6_mod = "bold"
+md_code = "#61ffca"
+md_task_checked = "#61ffca"
+md_task_unchecked = "#cdccce"
+md_muted = "#6d6d6d"
+md_code_bg = "#121016"
+md_text = "#edecee"
+link_fg = "#f694ff"
+```
+
+</details>
 
 ---
 
