@@ -378,8 +378,9 @@ fn engage_startup_theme(screen_mode: ScreenMode) {
     if screen_mode.is_minimal() {
         crate::theme::cache::set_terminal_native_lock(true);
     } else {
-        let initial_theme = crate::theme::cache::resolve_initial_theme();
-        crate::theme::cache::set(initial_theme);
+        // Single startup application point: resolves env/config/pointer,
+        // including user file themes (stored in the custom overlay).
+        crate::theme::cache::apply_initial_theme(true);
         mode_switch::mark_theme_resolved();
     }
 }
@@ -388,8 +389,7 @@ fn engage_startup_theme(screen_mode: ScreenMode) {
 /// Does nothing otherwise.
 fn finish_theme_after_probe(requested_minimal: bool, effective_mode: ScreenMode) {
     if requested_minimal && !effective_mode.is_minimal() {
-        let late_theme = crate::theme::cache::resolve_initial_theme_no_osc11();
-        crate::theme::cache::set(late_theme);
+        let late_theme = crate::theme::cache::apply_initial_theme(false);
         crate::theme::apply_cursor_color();
         mode_switch::mark_theme_resolved();
         tracing::info!(?late_theme, "minimal downgrade: resolved regular theme");

@@ -24,8 +24,7 @@ pub(crate) fn reseed_screen_mode(app: &mut AppView, mode: ScreenMode) {
     super::apply_screen_mode_globals(mode);
 
     if !mode.is_minimal() && !THEME_RESOLVED_FOR_FULL_TUI.swap(true, Ordering::AcqRel) {
-        let late_theme = crate::theme::cache::resolve_initial_theme_no_osc11();
-        crate::theme::cache::set(late_theme);
+        let late_theme = crate::theme::cache::apply_initial_theme(false);
         tracing::info!(?late_theme, "mode switch: resolved regular theme");
     }
 
