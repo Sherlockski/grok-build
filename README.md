@@ -116,6 +116,60 @@ Color literals: `#rrggbb`, `#rgb`, `#rrggbbaa` (alpha composited at parse),
 named ANSI (`red`, `lightblue`, `darkgray`, …), `idx:N` for xterm-256 indices,
 or `none`/`reset`.
 
+### Mapping VS Code themes
+
+Grok's field set is semantic, not a 1:1 mirror of VS Code keys. The reference
+pair is **VS Code Tokyo Night ↔ the built-in Tokyo Night**:
+[`theme/tokyonight.rs`](crates/codegen/xai-grok-pager-render/src/theme/tokyonight.rs)
+(the `palette` block + `Theme::tokyonight()`) vs the theme JSON on
+[marketplace](https://marketplace.visualstudio.com/items?itemName=enkia.tokyo-night).
+Open them side by side; every grok field below traces back to a VS Code key.
+Apply the same trace to any other theme.
+
+| VS Code key (Tokyo Night value) | Grok field(s) |
+|---|---|
+| `editor.background` — Storm (`#24283b`) | `bg_base` |
+| `list.activeSelectionBackground` (`#292e42`) | `bg_light`, `bg_dark`, `bg_highlight` |
+| Night editor/`terminal.background` (`#1a1b26`) | `bg_terminal` |
+| `editor.foreground` (`#c0caf5`) | `text_primary`, `md_text` |
+| `editor.selectionBackground` | `bg_visual` |
+| `editorWidget.background` / `tab.inactiveBackground` | `paste_bg`, `md_code_bg`, `scrollbar_bg` |
+| `scrollbarSlider.background` | `scrollbar_fg` |
+| `editor.hoverHighlightBackground`-family mid-tone | `bg_hover` |
+| `terminal.ansiYellow` (`#e0af68`) | `command`, `warning`, `accent_plan` |
+| `terminal.ansiBrightYellow` (`#ff9e64`) | `path` |
+| `terminal.ansiCyan`/`BrightCyan` | `running`, `md_task_checked`, `accent_model` |
+| `terminal.ansiMagenta` (`#bb9af7`) | `accent_assistant`, `accent_running`, `accent_verify`, `md_heading_h6` |
+| `terminal.ansiBlue` (`#7aa2f7`) | `accent_user`, `accent_system`, `accent_skill`, `fuzzy_accent`, `link_fg`, `md_heading_h2` |
+| `terminal.ansiGreen` (`#9ece6a`) | `accent_success`, `accent_remember`, `md_heading_h5` |
+| `terminal.ansiRed` / errorForeground (`#f7768e`) | `accent_error`, `diff_delete_fg` |
+| comment tokenColor (`#565f89`) | `gray`, `md_muted`, `diff_equal_fg` |
+| `tree.indentGuidesStroke` / line numbers | `gray_dim`, `diff_gutter_fg` |
+| bright punctuation gray (`#737aa2`) | `gray_bright`, `accent_tool` |
+| dim gutter gray (`#3b4261`) | `accent_thinking`, `paste_dim` |
+| `inputOption.activeBorder` / `editorCursor.foreground` | `prompt_border_active`, `accent_user` |
+| `focusBorder` / `editorBracketMatch.border` | `selection_border`, `hover_border`*, `prompt_border`* |
+| `gitDecoration.*ResourceForeground` | `command` (modified), `diff_insert_fg` (untracked) |
+
+\* Tokyo Night derives border/hover tones from its blues — pick the mid-tone
+of the same family rather than copying a single key.
+
+Markdown headings don't exist in VS Code's palette as six steps; both ports
+invent a ladder from the accent set (Tokyo Night: teal → blue → orange → red →
+green → magenta for h1–h6). Pick any pleasing ramp from the target theme's
+token colors and add `_mod = "bold"` where the VS Code theme sets bold.
+
+**Alpha channels:** VS Code themes use 8-digit hex (`#rrggbbaa`). Terminals
+don't blend, so composite over `bg_base` yourself per channel:
+
+```
+out = round(a × fg + (1 − a) × bg_base)      # a = AA/255
+```
+
+Example: Aura's `editor.selectionBackground #3d375e7f` over `#15141b`
+becomes `#3d375e`; its scrollbar slider `#a394f033` over `#15141b` becomes
+`#312e46`.
+
 ### Selecting a theme
 
 - **Slash command:** `/theme my-theme` (Tab completes custom themes). Bare
