@@ -28,7 +28,10 @@ jobs:
           else
             git rebase upstream/main
           fi
-          git push origin main
+          # Rebase rewrites our meta-commits (this workflow file), so the
+          # result never fast-forwards over origin/main — force-with-lease
+          # still refuses to clobber anything pushed since checkout.
+          git push --force-with-lease origin main
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install dotslash (bin/protoc is a dotslash wrapper)
         run: cargo install dotslash --locked
