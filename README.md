@@ -112,9 +112,8 @@ Color literals: `#rrggbb`, `#rgb`, `#rrggbbaa` (alpha composited at parse),
 named ANSI (`red`, `lightblue`, `darkgray`, …), `idx:N` for xterm-256 indices,
 or `none`/`reset`.
 
-For reference, the bundled Aura theme lives at
-`crates/codegen/xai-grok-pager-render/assets/themes/aura.toml` — copy it into
-`themes/` and tweak from there.
+Grok ships **no** file themes — everything in the picker beyond the built-ins
+is there because you put it in `themes/`.
 
 ### Selecting a theme
 

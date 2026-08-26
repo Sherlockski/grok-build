@@ -401,82 +401,12 @@ fn parse_json(s: &str) -> Option<RawFile> {
     serde_json::from_str::<RawFile>(s).ok()
 }
 
-/// Bundled file themes compiled into the binary.
-/// Aura ships as `assets/themes/aura.toml` and is embedded via `include_str!`
-/// so it works both in `cargo test` and in an installed `grok` binary
-/// (no `CARGO_MANIFEST_DIR/assets` on disk at runtime).
-const BUNDLED_THEMES: &[(&str, &str)] = &[("aura", include_str!("../../assets/themes/aura.toml"))];
-
-fn bundled_themes_dir() -> Option<PathBuf> {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let p = manifest.join("assets/themes");
-    if p.is_dir() { Some(p) } else { None }
-}
-#[allow(dead_code)]
-fn _bundled_themes_dir_keep() { let _ = bundled_themes_dir(); }
-
-fn bundled_metas() -> Vec<CustomMeta> {
-    let mut out = Vec::new();
-    for (name, content) in BUNDLED_THEMES {
-        let raw = toml::from_str::<RawFile>(content)
-            .or_else(|_| serde_yaml::from_str::<RawFile>(content))
-            .ok();
-        let display = raw
-            .as_ref()
-            .and_then(|r| r.meta.as_ref().and_then(|m| m.display.clone()))
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| title_case(name));
-        let description = raw
-            .as_ref()
-            .and_then(|r| r.meta.as_ref().and_then(|m| m.description.clone()))
-            .unwrap_or_default();
-        let requires_truecolor = raw
-            .as_ref()
-            .and_then(|r| r.meta.as_ref().and_then(|m| m.requires_truecolor))
-            .unwrap_or(true);
-        out.push(CustomMeta {
-            name: name.to_string(),
-            display,
-            description,
-            requires_truecolor,
-            path: PathBuf::from(format!("bundled:{}", name)),
-        });
-    }
-    out
-}
-
-fn load_bundled(name: &str) -> Option<Theme> {
-    let lower = name.to_ascii_lowercase();
-    for (n, content) in BUNDLED_THEMES {
-        if *n == lower {
-            let raw = toml::from_str::<RawFile>(content)
-                .or_else(|_| serde_yaml::from_str::<RawFile>(content))
-                .ok()?;
-            let mut theme = Theme::groknight();
-            let mut map = raw.theme.clone();
-            for (k, v) in &raw.flat {
-                let lk = k.to_ascii_lowercase();
-                if lk == "meta" || lk == "theme" {
-                    continue;
-                }
-                map.entry(k.clone()).or_insert_with(|| v.clone());
-            }
-            apply_color_map(&mut theme, &map);
-            apply_modifier_map(&mut theme, &map);
-            tracing::info!(theme = %n, "bundled theme loaded");
-            return Some(theme);
-        }
-    }
-    None
-}
-
-/// List available custom themes: bundled `assets/themes/` + `$GROK_HOME/themes/`.
-/// `$GROK_HOME` entries override bundled ones with the same name.
+/// List available custom themes under `$GROK_HOME/themes/`.
+///
+/// Grok ships **no** file themes — every entry here is user-supplied.
 pub fn discover() -> Vec<CustomMeta> {
-    let mut out = bundled_metas();
-    let seen: std::collections::HashSet<String> = out.iter().map(|m| m.name.clone()).collect();
+    let mut out: Vec<CustomMeta> = Vec::new();
 
-    // user themes override (or add)
     let dir = themes_dir();
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -526,47 +456,15 @@ pub fn discover() -> Vec<CustomMeta> {
             .as_ref()
             .and_then(|r| r.meta.as_ref().and_then(|m| m.requires_truecolor))
             .unwrap_or(true);
-        // user overrides bundled with same name
-        if seen.contains(&stem) {
-            if let Some(pos) = out.iter().position(|m| m.name == stem) {
-                out[pos] = CustomMeta { name: stem, display, description, requires_truecolor, path };
-            }
-        } else {
-            out.push(CustomMeta {
-                name: stem,
-                display,
-                description,
-                requires_truecolor,
-                path,
-            });
-        }
+        out.push(CustomMeta {
+            name: stem,
+            display,
+            description,
+            requires_truecolor,
+            path,
+        });
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
-}
-
-#[allow(dead_code)]
-fn discover_in_dir(dir: &Path) -> Vec<CustomMeta> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
-    };
-    let mut out = Vec::new();
-    for ent in entries.flatten() {
-        let path = ent.path();
-        if !path.is_file() { continue; }
-        let Some(name_os) = path.file_name().and_then(|n| n.to_str()) else { continue; };
-        if is_pointer_file_name(name_os) { continue; }
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-        if !matches!(ext.as_str(), "toml" | "yaml" | "yml" | "json") { continue; }
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-        if stem.is_empty() { continue; }
-        let raw = parse_raw_file(&path);
-        let display = raw.as_ref().and_then(|r| r.meta.as_ref().and_then(|m| m.display.clone())).filter(|s| !s.trim().is_empty()).unwrap_or_else(|| title_case(&stem));
-        let description = raw.as_ref().and_then(|r| r.meta.as_ref().and_then(|m| m.description.clone())).unwrap_or_default();
-        let requires_truecolor = raw.as_ref().and_then(|r| r.meta.as_ref().and_then(|m| m.requires_truecolor)).unwrap_or(true);
-        out.push(CustomMeta { name: stem, display, description, requires_truecolor, path });
-    }
     out
 }
 
@@ -582,7 +480,7 @@ fn find_path_for_name(name: &str) -> Option<PathBuf> {
             return Some(m.path);
         }
     }
-    // also try direct file probe (user dir only — bundled has no dir on disk in installed binary)
+    // also try direct file probe
     let dir = themes_dir();
     for ext in ["toml", "yaml", "yml", "json"] {
         let p = dir.join(format!("{lower}.{ext}"));
@@ -704,15 +602,7 @@ fn apply_modifier_map(theme: &mut Theme, map: &HashMap<String, String>) {
 
 /// Load a custom theme by name (case-insensitive). Returns the built `Theme`.
 pub fn load(name: &str) -> Option<Theme> {
-    // bundled themes are embedded (no file on disk in installed binary)
-    if let Some(t) = load_bundled(name) {
-        return Some(t);
-    }
     let path = find_path_for_name(name)?;
-    // bundled sentinel path "bundled:xxx" already handled above
-    if path.to_string_lossy().starts_with("bundled:") {
-        return load_bundled(name);
-    }
     load_from_path(&path)
 }
 
@@ -796,20 +686,52 @@ mod tests {
         let metas = discover();
         assert!(metas.iter().any(|m| m.name == "neon"), "neon must be discovered: {:?}", metas);
         assert!(metas.iter().any(|m| m.name == "sunset"), "sunset yaml must be discovered");
-        // bundled aura must also be discovered
-        assert!(metas.iter().any(|m| m.name == "aura"), "bundled aura must be discovered: {:?}", metas.iter().map(|m| &m.name).collect::<Vec<_>>());
         let pointer = load_pointer();
         assert_eq!(pointer.as_deref(), Some("neon"));
         let t = load("neon").expect("load neon");
         assert_eq!(t.bg_base, Color::Rgb(0x0a, 0x0a, 0x12));
     }
 
+    /// The canonical Aura palette as a user-supplied theme file. Grok ships
+    /// no file themes — this content is what a user puts in
+    /// `~/.grok/themes/aura.toml`. Hexes are verbatim from upstream
+    /// aura-dark-color-theme.json / aura-colors.css.
+    const AURA_USER_TOML: &str = "[meta]\n\
+display = \"Aura\"\ndescription = \"Dark purple\"\nrequires_truecolor = true\n\n\
+[theme]\n\
+bg_base = \"#15141b\"\nbg_light = \"#2e2b38\"\nbg_dark = \"#110f18\"\n\
+bg_highlight = \"#3b334b\"\nbg_hover = \"#3b334b\"\nbg_terminal = \"#15141b\"\n\
+accent_user = \"#a277ff\"\naccent_assistant = \"#f694ff\"\n\
+accent_thinking = \"#6d6d6d\"\naccent_tool = \"#525156\"\n\
+accent_system = \"#82e2ff\"\naccent_error = \"#ff6767\"\n\
+accent_success = \"#61ffca\"\naccent_running = \"#a277ff\"\n\
+accent_skill = \"#f694ff\"\ntext_primary = \"#edecee\"\n\
+text_secondary = \"#cdccce\"\ngray_dim = \"#4d4d4d\"\ngray = \"#6d6d6d\"\n\
+gray_bright = \"#adacae\"\ncommand = \"#ffca85\"\npath = \"#82e2ff\"\n\
+running = \"#61ffca\"\nwarning = \"#ffca85\"\nfuzzy_accent = \"#a277ff\"\n\
+accent_plan = \"#ffca85\"\naccent_verify = \"#a277ff\"\n\
+accent_remember = \"#61ffca\"\nselection_border = \"#3d375e\"\n\
+hover_border = \"#3b334b\"\nprompt_border = \"#3b334b\"\n\
+prompt_border_active = \"#a277ff\"\naccent_model = \"#61ffca\"\n\
+scrollbar_bg = \"#121016\"\nscrollbar_fg = \"#312e46\"\n\
+diff_delete_bg = \"#321a25\"\ndiff_delete_fg = \"#ff6767\"\n\
+diff_insert_bg = \"#122c29\"\ndiff_insert_fg = \"#61ffca\"\n\
+diff_equal_fg = \"#6d6d6d\"\ndiff_gutter_fg = \"#4d4d4d\"\n\
+bg_visual = \"#3d375e\"\npaste_bg = \"#121016\"\npaste_fg = \"#cdccce\"\n\
+paste_dim = \"#6d6d6d\"\nmd_code_bg = \"#121016\"\nmd_text = \"#edecee\"\n\
+link_fg = \"#f694ff\"\n";
+
     #[test]
     #[serial]
-    fn aura_bundled_theme_loads_and_matches_hardcoded() {
-        // Aura is a bundled file theme, not a builtin enum variant.
-        // bg hexes must match upstream aura-dark-color-theme.json.
-        let t = load("aura").expect("bundled aura.toml must load");
+    fn user_supplied_aura_theme_loads_with_upstream_hexes() {
+        // Aura is strictly user-supplied: write it into themes/ like a
+        // user would, and verify the parsed hexes match upstream.
+        let tmp = tempfile::tempdir().unwrap();
+        let themes = tmp.path().join("themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("aura.toml"), AURA_USER_TOML).unwrap();
+        let _guard = GrokHomeGuard::set(tmp.path());
+        let t = load("aura").expect("user-supplied aura.toml must load");
         assert_eq!(t.bg_base, Color::Rgb(0x15, 0x14, 0x1b)); // editor.background #15141b
         assert_eq!(t.bg_terminal, Color::Rgb(0x15, 0x14, 0x1b));
         assert_eq!(t.bg_dark, Color::Rgb(0x11, 0x0f, 0x18)); // sideBar.background #110f18
@@ -818,7 +740,6 @@ mod tests {
         assert_eq!(t.accent_system, Color::Rgb(0x82, 0xe2, 0xff)); // blue #82e2ff
         assert_eq!(t.text_primary, Color::Rgb(0xed, 0xec, 0xee)); // foreground #edecee
         assert_eq!(t.text_secondary, Color::Rgb(0xcd, 0xcc, 0xce)); // dropdown.foreground
-        // Verify aura is discovered (not filtered as pointer)
         let metas = discover();
         let aura = metas.iter().find(|m| m.name == "aura").expect("aura in discover");
         assert_eq!(aura.display, "Aura");
@@ -833,6 +754,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let themes = tmp.path().join("themes");
         std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("aura.toml"), AURA_USER_TOML).unwrap();
         std::fs::write(themes.join("config.toml"), "active = \"aura\"\n").unwrap();
         let _guard = GrokHomeGuard::set(tmp.path());
         crate::theme::cache::reset_for_test();

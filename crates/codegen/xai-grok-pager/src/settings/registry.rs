@@ -143,7 +143,7 @@ fn build_theme_choices(include_auto: bool) -> Vec<OwnedEnumChoice> {
             description: "Follow system dark/light appearance.".to_string(),
         });
     }
-    // builtin themes (Aura is NOT builtin — it ships as bundled file theme assets/themes/aura.toml)
+    // builtin themes (Aura is NOT builtin — users supply it as a file theme in themes/)
     let builtins: &[(&str, &str, &str)] = &[
         ("groknight", "Grok Night", "Neutral dark with magenta accent."),
         ("grokday", "Grok Day", "Light theme for bright environments."),

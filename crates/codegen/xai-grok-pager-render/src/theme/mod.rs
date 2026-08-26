@@ -30,8 +30,8 @@ pub use tokyonight::{Theme, pulse_brightness, wave_brightness};
 
 /// Available theme variants.
 ///
-/// Aura is NOT a builtin — it ships as a bundled file theme
-/// `assets/themes/aura.toml` (daltonmenezes/aura-theme) and is
+/// Aura is NOT a builtin — it is strictly user-supplied as a file theme
+/// (e.g. `~/.grok/themes/aura.toml`, daltonmenezes/aura-theme palette) and
 /// discovered via `custom::discover()` / `custom::load("aura")`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ThemeKind {
