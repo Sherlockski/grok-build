@@ -250,24 +250,130 @@ pub fn invalidate_auto_theme_config() {
 
 // -- Theme resolution --------------------------------------------------------
 
+/// What the startup precedence chain selected.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum InitialPick {
+    /// `auto` / `system`: arm appearance watcher, resolve via OS.
+    Auto,
+    /// A builtin catalog theme.
+    Builtin(ThemeKind),
+    /// A user-supplied file theme (by lowercase name).
+    Custom(String),
+}
+
+/// Apply the first valid source among `env`, `config`, `pointer`.
+///
+/// Invalid values fall through to the next source (matches the historical
+/// `unknown_env_theme_falls_through_to_config` contract); `pointer` is last
+/// because committing a theme keeps it mirrored from `[ui].theme`.
+pub(crate) fn pick_initial_from(
+    env: Option<&str>,
+    config: Option<&str>,
+    pointer: Option<&str>,
+) -> Option<InitialPick> {
+    for src in [env, config, pointer].into_iter().flatten() {
+        let trimmed = src.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower == "auto" || lower == "system" {
+            return Some(InitialPick::Auto);
+        }
+        if let Some(kind) = ThemeKind::from_name(&lower) {
+            return Some(InitialPick::Builtin(kind));
+        }
+        if super::custom::is_known(&lower) {
+            return Some(InitialPick::Custom(lower));
+        }
+    }
+    None
+}
+
+/// Resolve + install the startup theme from env / `[ui].theme` /
+/// themes-pointer, including user-supplied file themes.
+///
+/// This is the SINGLE startup application point — previous flow resolved a
+/// builtin-only name and unconditionally `set()` it, marking the cache
+/// loaded before the pointer/custom seed could run, which booted every
+/// file theme back to Grok Night.
+///
+/// Returns the nominal [`ThemeKind`] for callers that still want one
+/// (custom themes report `GrokNight`; rendering goes through
+/// [`super::Theme::current`], which serves the custom overlay).
+pub fn apply_initial_theme(osc11_fallback: bool) -> ThemeKind {
+    if terminal_native_locked() {
+        return ThemeKind::GrokNight;
+    }
+    match pick_initial_from(
+        env_theme_name_any().as_deref(),
+        load_raw_theme_name().as_deref(),
+        super::custom::load_pointer().as_deref(),
+    ) {
+        Some(InitialPick::Auto) => resolve_from_config(Some(ThemeKind::Auto), osc11_fallback),
+        Some(InitialPick::Builtin(kind)) => {
+            set_auto_mode(false);
+            set(kind);
+            tracing::info!(theme = %kind.display_name(), source = "startup", "theme applied");
+            kind
+        }
+        Some(InitialPick::Custom(ref name)) => match super::custom::load(name) {
+            Some(theme) => {
+                set_auto_mode(false);
+                set_custom(name.clone(), theme);
+                tracing::info!(theme = %name, source = "startup-file", "file theme applied");
+                ThemeKind::GrokNight
+            }
+            None => {
+                tracing::warn!(theme = %name, "startup file theme failed to load");
+                clear_custom();
+                CURRENT.store(ThemeKind::GrokNight as u8, Ordering::Relaxed);
+                LOADED.store(true, Ordering::Release);
+                ThemeKind::GrokNight
+            }
+        },
+        None => {
+            clear_custom();
+            CURRENT.store(ThemeKind::GrokNight as u8, Ordering::Relaxed);
+            LOADED.store(true, Ordering::Release);
+            ThemeKind::GrokNight
+        }
+    }
+}
+
+/// Unfiltered env override (`GROK_THEME` / `LC_GROK_THEME`) — accepts
+/// builtin names AND user file theme names.
+fn env_theme_name_any() -> Option<String> {
+    let env = crate::host::collect_unicode_env();
+    for key in ["GROK_THEME", "LC_GROK_THEME"] {
+        if let Some(raw) = env.get(key).map(String::as_str).filter(|v| !v.is_empty()) {
+            return Some(raw.to_string());
+        }
+    }
+    None
+}
+
 /// Resolve the effective theme, respecting the full precedence chain.
 ///
-/// Called once at startup. Returns the concrete `ThemeKind` (never `Auto`).
+/// Called once at startup. Returns a concrete `ThemeKind`; when a
+/// user-supplied FILE theme wins, the overlay carries it and
+/// `GrokNight` is the nominal kind (see [`apply_initial_theme`]).
 ///
 /// Precedence:
 /// 1. Environment variable (`GROK_THEME` / `LC_GROK_THEME`)
 /// 2. Config file (`[ui].theme`)
-/// 3. Default: `GrokNight`
+/// 3. Themes pointer file (`themes/config.toml`)
+/// 4. Default: `GrokNight`
 #[must_use]
 pub fn resolve_initial_theme() -> ThemeKind {
-    resolve_initial_theme_from(env_theme_name().as_deref(), load_from_disk(), true)
+    apply_initial_theme(true)
 }
 
 /// Variant of [`resolve_initial_theme`] without the OSC 11 startup
 /// fallback, for resolution after the terminal is initialized.
 #[must_use]
 pub fn resolve_initial_theme_no_osc11() -> ThemeKind {
-    resolve_initial_theme_from(env_theme_name().as_deref(), load_from_disk(), false)
+    apply_initial_theme(false)
 }
 
 fn env_theme_name() -> Option<String> {
@@ -344,6 +450,13 @@ pub fn resolve_auto() -> ThemeKind {
 
 /// Raw theme name from config (including custom names that `from_name` rejects).
 fn load_raw_theme_name() -> Option<String> {
+    // Test hook: xai_grok_home caches the resolved home in a process-global
+    // OnceLock, so a temp-dir GROK_HOME set mid-test-binary can't influence
+    // this reader. Tests inject the value directly instead.
+    #[cfg(any(test, feature = "test-support"))]
+    if let Some(forced) = RAW_THEME_NAME_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(forced);
+    }
     let root = xai_grok_config::load_effective_config_disk_only().ok()?;
     let table = root.as_table()?;
     let v = table
@@ -357,6 +470,14 @@ fn load_raw_theme_name() -> Option<String> {
     } else {
         Some(t)
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+static RAW_THEME_NAME_OVERRIDE: Mutex<Option<String>> = Mutex::new(None);
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_raw_theme_name_override(value: Option<String>) {
+    *RAW_THEME_NAME_OVERRIDE.lock().unwrap_or_else(|e| e.into_inner()) = value;
 }
 
 // -- Disk reads --------------------------------------------------------------
@@ -422,6 +543,7 @@ pub fn reset_for_test() {
     *AUTO_THEME_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *CUSTOM_NAME.lock().unwrap_or_else(|e| e.into_inner()) = None;
     *CUSTOM_THEME.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    set_raw_theme_name_override(None);
 }
 
 /// Seed `AUTO_THEME_CONFIG` with explicit defaults so `auto_theme_config()`

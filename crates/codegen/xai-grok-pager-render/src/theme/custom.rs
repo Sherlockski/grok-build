@@ -769,6 +769,68 @@ link_fg = \"#f694ff\"\n";
         crate::theme::cache::reset_for_test();
     }
 
+    #[test]
+    #[serial]
+    fn startup_config_custom_theme_applies_via_resolve() {
+        // Regression for "launch boots Grok Night instead of the configured
+        // file theme": engage_startup_theme resolved `[ui].theme = "aura"`
+        // through ThemeKind::from_name (builtins only) → None → pinned
+        // GrokNight before the custom seed could run. The name-based
+        // apply_initial_theme must honor file themes too.
+        let tmp = tempfile::tempdir().unwrap();
+        let themes = tmp.path().join("themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        std::fs::write(themes.join("aura.toml"), AURA_USER_TOML).unwrap();
+        std::fs::write(
+            tmp.path().join("config.toml"),
+            "[ui]\ntheme = \"aura\"\n",
+        )
+        .unwrap();
+        let _guard = GrokHomeGuard::set(tmp.path());
+        crate::theme::cache::reset_for_test();
+        // Inject the config value directly: xai_grok_home's process-global
+        // home OnceLock makes the real disk reader non-hermetic across tests.
+        crate::theme::cache::set_raw_theme_name_override(Some("aura".into()));
+
+        let kind = crate::theme::cache::resolve_initial_theme_no_osc11();
+        assert_eq!(kind, crate::theme::ThemeKind::GrokNight, "nominal kind");
+        assert_eq!(crate::theme::cache::current_name(), "aura");
+        assert!(crate::theme::cache::is_custom());
+        let t = crate::theme::Theme::current();
+        assert!(
+            matches!(t.bg_base, Color::Rgb(0x15, 0x14, 0x1b)),
+            "bg_base must come from the aura FILE theme (#15141b), got {:?}",
+            t.bg_base
+        );
+        crate::theme::cache::reset_for_test();
+    }
+
+    #[test]
+    #[serial]
+    fn startup_config_builtin_theme_still_applies_normally() {
+        // Guard the refactor: builtin names keep resolving through the
+        // builtin path (no overlay), and AUTO_MODE disengages.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("themes")).unwrap();
+        std::fs::write(
+            tmp.path().join("config.toml"),
+            "[ui]\ntheme = \"tokyonight\"\n",
+        )
+        .unwrap();
+        let _guard = GrokHomeGuard::set(tmp.path());
+        crate::theme::cache::reset_for_test();
+        crate::theme::cache::set_raw_theme_name_override(Some("tokyonight".into()));
+
+        let kind = crate::theme::cache::apply_initial_theme(false);
+        assert_eq!(kind, crate::theme::ThemeKind::TokyoNight);
+        assert!(!crate::theme::cache::is_custom());
+        assert_eq!(
+            crate::theme::Theme::current().bg_base,
+            crate::theme::Theme::tokyonight().bg_base
+        );
+        crate::theme::cache::reset_for_test();
+    }
+
     #[tokio::test]
     #[serial]
     async fn watcher_pointer_live_reload() {
