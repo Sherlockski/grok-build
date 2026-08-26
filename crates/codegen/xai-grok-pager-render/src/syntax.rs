@@ -126,6 +126,11 @@ pub fn highlight_line(
 /// While the terminal-native lock is engaged, [`Theme::current_kind`] reports a nominal `GrokNight`, so this returns the night theme.
 /// Token colors are remapped in [`syntect_to_ratatui_fg`]; do not load a day theme based on OS/terminal polarity detection.
 pub fn get_syntect() -> &'static Syntect {
+    // Custom file themes (including bundled aura.toml) are dark → use night syntect
+    if crate::theme::cache::is_custom() {
+        return SYNTECT_GROKNIGHT
+            .get_or_init(|| Syntect::new(include_bytes!("../assets/grok-night.tmTheme")));
+    }
     match crate::theme::Theme::current_kind() {
         ThemeKind::GrokNight
         | ThemeKind::RosePineMoon

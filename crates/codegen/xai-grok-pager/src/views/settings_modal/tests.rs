@@ -399,6 +399,40 @@ fn every_dynamic_enum_setting_has_action_for_string_arm() {
                      SetForkSecondaryModel(_), got {nonempty_action:?}",
                 );
             }
+            // Theme family: no empty/clear sentinel (empty → None so a
+            // blank Enter no-ops); non-empty commits via the typed Set*.
+            "theme" => {
+                assert!(
+                    empty_action.is_none(),
+                    "theme empty canonical must produce None, got {empty_action:?}",
+                );
+                assert!(
+                    matches!(nonempty_action, Some(Action::SetTheme(_))),
+                    "theme non-empty canonical must produce SetTheme(_), got {nonempty_action:?}",
+                );
+            }
+            "auto_dark_theme" => {
+                assert!(
+                    empty_action.is_none(),
+                    "auto_dark_theme empty canonical must produce None, got {empty_action:?}",
+                );
+                assert!(
+                    matches!(nonempty_action, Some(Action::SetAutoDarkTheme(_))),
+                    "auto_dark_theme non-empty canonical must produce \
+                     SetAutoDarkTheme(_), got {nonempty_action:?}",
+                );
+            }
+            "auto_light_theme" => {
+                assert!(
+                    empty_action.is_none(),
+                    "auto_light_theme empty canonical must produce None, got {empty_action:?}",
+                );
+                assert!(
+                    matches!(nonempty_action, Some(Action::SetAutoLightTheme(_))),
+                    "auto_light_theme non-empty canonical must produce \
+                     SetAutoLightTheme(_), got {nonempty_action:?}",
+                );
+            }
             other => panic!(
                 "Unknown DynamicEnum key `{other}` — add a discriminating arm in \
                  every_dynamic_enum_setting_has_action_for_string_arm so future \
@@ -5890,9 +5924,13 @@ fn click_settings_breadcrumb_after_nav_reverts_to_original() {
             original_value,
             ..
         } => {
+            // Theme is a DynamicEnum since custom file themes joined the
+            // catalog — original arrives as String now (Enum kept for
+            // any future static-preview settings).
             let orig = match original_value {
                 SettingValue::Enum(c) => c.to_string(),
-                other => panic!("expected SettingValue::Enum, got {other:?}"),
+                SettingValue::String(s) => s.clone(),
+                other => panic!("expected String/Enum original, got {other:?}"),
             };
             (orig, *choices_idx)
         }

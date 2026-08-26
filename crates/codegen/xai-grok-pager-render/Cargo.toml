@@ -90,8 +90,11 @@ shellexpand = "3.1"
 # Parsing
 url = { workspace = true }
 
-# Hot-reload config (dev mode)
-notify = { workspace = true, optional = true }
+# Custom themes (file-based)
+serde_yaml = { workspace = true }
+serde_json = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
 
 # libc: poll/read for non-blocking terminal reads in theme/osc11.rs.
 [target.'cfg(unix)'.dependencies]

@@ -17,6 +17,12 @@ use super::system_appearance;
 /// Loaded from disk once at startup via `load_from_disk()`, then kept in sync by `set()`.
 static CURRENT: AtomicU8 = AtomicU8::new(ThemeKind::GrokNight as u8);
 static LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Custom theme overlay — when Some, `Theme::current()` serves this
+/// instead of the builtin `CURRENT` kind. Stored separately because
+/// custom names don't fit the `ThemeKind` enum / `AtomicU8`.
+static CUSTOM_NAME: Mutex<Option<String>> = Mutex::new(None);
+static CUSTOM_THEME: Mutex<Option<super::tokyonight::Theme>> = Mutex::new(None);
 #[cfg(any(test, feature = "test-support"))]
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -54,6 +60,57 @@ pub struct AutoThemeConfig {
     pub light_theme: Option<ThemeKind>,
 }
 
+/// Current theme name (lowercase canonical), including custom themes.
+pub fn current_name() -> String {
+    if terminal_native_locked() {
+        return "groknight".to_string();
+    }
+    // ensure loaded
+    let _ = current_kind();
+    if let Some(name) = CUSTOM_NAME.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return name;
+    }
+    theme_kind_from_u8(CURRENT.load(Ordering::Relaxed))
+        .display_name()
+        .to_string()
+}
+
+/// Whether the active theme is a custom file-based theme.
+pub fn is_custom() -> bool {
+    CUSTOM_NAME
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some()
+}
+
+/// Custom theme value, if active.
+///
+/// Ensures lazy seeding (pointer file / config read) has run first —
+/// mirrors [`current_name`]. Without this, the FIRST `Theme::current()`
+/// call after startup saw `CUSTOM_THEME == None` (seed hadn't run yet),
+/// fell through to the builtin kind, and painted GrokNight's background
+/// even when `themes/config.toml` pointed at a custom theme.
+pub fn custom_theme() -> Option<super::tokyonight::Theme> {
+    let _ = current_kind();
+    CUSTOM_THEME.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Set a custom theme as active (in-memory only).
+pub fn set_custom(name: String, theme: super::tokyonight::Theme) {
+    *CUSTOM_NAME.lock().unwrap_or_else(|e| e.into_inner()) = Some(name.to_ascii_lowercase());
+    *CUSTOM_THEME.lock().unwrap_or_else(|e| e.into_inner()) = Some(theme);
+    LOADED.store(true, Ordering::Release);
+    tracing::info!(active = %name, "custom theme set in cache");
+}
+
+/// Clear custom overlay and fall back to builtin.
+pub fn clear_custom() {
+    *CUSTOM_NAME.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *CUSTOM_THEME.lock().unwrap_or_else(|e| e.into_inner()) = None;
+}
+
+/// Get the current theme kind.
+///
 /// On the first call, reads from `~/.grok/config.toml` (via the shell's
 /// `load_effective_config`).
 /// After that, returns the in-memory value (updated by [`set`]).
@@ -63,10 +120,39 @@ pub fn current_kind() -> ThemeKind {
         return ThemeKind::GrokNight;
     }
     if !LOADED.load(Ordering::Acquire) {
-        // Two threads racing into the seed path is harmless: the disk read is idempotent and `store` is atomic
-        // Worst case both threads call `load_from_disk` once
-        if let Some(kind) = load_from_disk() {
+        // Try pointer file first (file-based themes), then effective config.
+        // Pointer wins so themes/config.toml -> active indirection works.
+        if let Some(active) = super::custom::load_pointer() {
+            if let Some(kind) = ThemeKind::from_name(&active) {
+                CURRENT.store(kind as u8, Ordering::Relaxed);
+                clear_custom();
+                tracing::info!(theme = %active, source = "pointer", "theme cache seeded from pointer file");
+            } else if let Some(theme) = super::custom::load(&active) {
+                // builtin CURRENT stays at default, but custom overlay holds the theme
+                set_custom(active.clone(), theme);
+                tracing::info!(theme = %active, source = "pointer-custom", "custom theme cache seeded from pointer file");
+            } else {
+                tracing::warn!(theme = %active, "pointer references unknown theme, ignoring");
+                if let Some(kind) = load_from_disk() {
+                    CURRENT.store(kind as u8, Ordering::Relaxed);
+                }
+            }
+        } else if let Some(kind) = load_from_disk() {
             CURRENT.store(kind as u8, Ordering::Relaxed);
+            // if config referenced a custom theme, also load it
+            // (load_from_disk only returns builtins, so check raw config for customs)
+            if let Some(raw) = load_raw_theme_name() {
+                if ThemeKind::from_name(&raw).is_none() && super::custom::is_known(&raw) {
+                    if let Some(theme) = super::custom::load(&raw) {
+                        set_custom(raw, theme);
+                    }
+                }
+            }
+        } else if let Some(raw) = load_raw_theme_name() {
+            // config has a custom theme name that from_name rejected
+            if let Some(theme) = super::custom::load(&raw) {
+                set_custom(raw, theme);
+            }
         }
         LOADED.store(true, Ordering::Release);
     }
@@ -75,9 +161,17 @@ pub fn current_kind() -> ThemeKind {
 
 /// Set the in-memory theme kind without writing to disk.
 ///
-/// Used by the dispatcher (after `Action::SetTheme` is processed) and by the live-preview path during the picker.
-/// Disk-write happens via `Effect::PersistSetting`, NOT here.
+/// Used by the dispatcher (after `Action::SetTheme` is processed) and
+/// by the live-preview path during the picker. Disk-write happens via
+/// `Effect::PersistSetting`, NOT here. Clears any custom overlay.
+///
+/// Deliberately does NOT touch the pointer file: startup re-seeds
+/// (`mode_switch` late-theme path) call `set` with the config.toml
+/// value, and writing the pointer here would clobber a user's
+/// `themes/config.toml` on every launch. Pointer writes happen only
+/// on explicit user intent (`dispatch::settings::set_theme_inner`).
 pub fn set(kind: ThemeKind) {
+    clear_custom();
     CURRENT.store(kind as u8, Ordering::Relaxed);
     LOADED.store(true, Ordering::Release);
 }
@@ -212,6 +306,23 @@ pub fn resolve_auto() -> ThemeKind {
     resolve_from_appearance(system_appearance::detect())
 }
 
+/// Raw theme name from config (including custom names that `from_name` rejects).
+fn load_raw_theme_name() -> Option<String> {
+    let root = xai_grok_config::load_effective_config_disk_only().ok()?;
+    let table = root.as_table()?;
+    let v = table
+        .get("ui")
+        .and_then(|ui| ui.get("theme"))
+        .and_then(|v| v.as_str())
+        .or_else(|| table.get("theme").and_then(|v| v.as_str()))?;
+    let t = v.trim().to_string();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
 // -- Disk reads --------------------------------------------------------------
 
 /// Read the theme from the effective config (managed_config.toml merged under config.toml; user wins).
@@ -263,6 +374,8 @@ pub fn reset_for_test() {
     AUTO_MODE.store(false, Ordering::Relaxed);
     set_terminal_native_lock(false);
     *AUTO_THEME_CONFIG.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *CUSTOM_NAME.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *CUSTOM_THEME.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Seed `AUTO_THEME_CONFIG` with explicit defaults so `auto_theme_config()` never falls through to `load_auto_theme_config()`.

@@ -16,6 +16,7 @@ commands, searches the web, and manages long-running tasks — interactively,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
+[Theming](#live-reloading-config-file-based-themes) ·
 [Installing the released binary](#installing-the-released-binary) ·
 [Building from source](#building-from-source) ·
 [Documentation](#documentation) ·
@@ -35,6 +36,111 @@ A small `SOURCE_REV` file at the root records the full monorepo commit SHA
 for the version of the code present in this tree.
 
 </div>
+
+---
+
+## Live-reloading config-file based themes
+
+Grok ships **Aura** (daltonmenezes/aura-theme) as a bundled file theme, and you
+can add your own themes as plain config files — no rebuild required. Anything in
+the theme directory is picked up automatically, appears in `/theme` and the
+settings picker (Settings → Appearance → Theme), and **hot-reloads live** while
+grok is running: edit a theme file and the UI recolors immediately; edit the
+pointer file to switch themes without touching the app.
+
+### Layout
+
+Everything lives under your grok home (`~/.grok` by default, or `$GROK_HOME`):
+
+```
+~/.grok/
+└── themes/
+    ├── config.toml        # pointer file — which theme is active
+    └── my-theme.toml      # one theme per file
+```
+
+The pointer file selects the active theme. The canonical name is
+`themes/config.toml`, but these equivalents all work — first match wins:
+`themes/theme.toml`, `themes/theme-config.toml|yaml|yml|json`,
+`themes/config.yaml|yml|json`, or `theme-config.*` / `theme.*` at the grok home
+root.
+
+```toml
+# ~/.grok/themes/config.toml
+active = "my-theme"
+```
+
+(`active` is canonical; `theme`, `current`, and `name` are accepted aliases, and
+TOML, YAML, and JSON are all parsed.)
+
+### Writing a theme
+
+One file under `themes/` per theme, named `<theme-name>.toml` (`.yaml`, `.yml`,
+and `.json` also work). Files are **sparse**: any key you omit falls back to the
+built-in Grok Night palette, so a two-line theme is valid.
+
+```toml
+# ~/.grok/themes/my-theme.toml
+[meta]
+display = "My Theme"            # picker label (defaults to Title Case of filename)
+description = "Warm amber"      # shown in the picker
+requires_truecolor = true       # set false if it looks fine on 256-color terminals
+
+[theme]
+bg_base = "#0f0f0f"             # main canvas background
+accent_user = "#a277ff"
+text_primary = "#edecee"
+
+md_heading_h1_mod = "bold"      # modifiers: bold,dim,italic,underline,...
+```
+
+Every field of the internal `Theme` struct is overridable using its Rust field
+name — backgrounds (`bg_base`, `bg_light`, `bg_dark`, `bg_highlight`,
+`bg_hover`, `bg_terminal`, `bg_visual`), accents (`accent_user`,
+`accent_assistant`, `accent_thinking`, `accent_tool`, `accent_system`,
+`accent_error`, `accent_success`, `accent_running`, `accent_skill`,
+`accent_plan`, `accent_verify`, `accent_remember`, `accent_model`),
+text/grays (`text_primary`, `text_secondary`, `gray_dim`, `gray`,
+`gray_bright`), semantics (`command`, `path`, `running`, `warning`,
+`fuzzy_accent`), borders (`selection_border`, `hover_border`, `prompt_border`,
+`prompt_border_active`), scrollbar/diff/paste colors, and the markdown palette
+(`md_heading_h1`…`md_heading_h6`, `md_code`, `md_code_bg`, `md_muted`,
+`md_text`, `link_fg`, `md_task_checked`, `md_task_unchecked`). Heading
+modifiers use `<field>_mod`.
+
+Color literals: `#rrggbb`, `#rgb`, `#rrggbbaa` (alpha composited at parse),
+named ANSI (`red`, `lightblue`, `darkgray`, …), `idx:N` for xterm-256 indices,
+or `none`/`reset`.
+
+For reference, the bundled Aura theme lives at
+`crates/codegen/xai-grok-pager-render/assets/themes/aura.toml` — copy it into
+`themes/` and tweak from there.
+
+### Selecting a theme
+
+- **Slash command:** `/theme my-theme` (Tab completes custom themes). Bare
+  `/theme` cycles built-ins.
+- **Settings modal:** Settings → Appearance → Theme; custom themes appear
+  alongside the built-ins. Arrow keys preview live, Enter commits, Esc reverts.
+- **Config:** `[ui].theme = "my-theme"` in `config.toml`.
+- **Pointer file:** write `active = "…"` to `themes/config.toml` — even while
+  grok is running. It switches within ~120 ms, no restart.
+- **Env:** `GROK_THEME=my-theme grok`.
+
+Committing a theme via `/theme` or the picker keeps the pointer file in sync,
+so the two stay consistent.
+
+### Live reload behavior
+
+- Theme *files* are watched with inotify (debounced ~120 ms). Editing the file
+  of the **active** theme recolors the running app instantly — handy for
+  iterating on palettes with a second monitor/editor.
+- Creating/deleting theme files updates the pickers on next open.
+- Events that land while you're mid-preview (arrowing through the picker) are
+  suppressed so a stale write can't snap you back to the committed theme.
+- If backgrounds look wrong over SSH/tmux, truecolor detection may be degraded
+  — force it with `COLORTERM=truecolor` or `GROK_FORCE_COLOR_LEVEL=truecolor`
+  (also accepts `none`/`basic`/`256`).
 
 ---
 

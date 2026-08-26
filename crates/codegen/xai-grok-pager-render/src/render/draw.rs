@@ -40,6 +40,7 @@ use crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use crossterm::{QueueableCommand, cursor};
 use ratatui::Frame;
 use ratatui::backend::CrosstermBackend;
+use ratatui::style::{Color, Style};
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
@@ -400,13 +401,42 @@ impl CursorState {
 /// Bypasses ratatui's `try_draw()` to avoid its unconditional cursor management.
 /// See [module docs](self) for the full rationale.
 ///
-/// The `render_fn` receives a [`Frame`] and a `&mut Vec<LinkSpan>` to fill with the frame's OSC 8 hyperlink regions (absolute viewport coordinates).
-/// Those spans are handed to the terminal before the diff, so hyperlinks are emitted and cleared in lockstep with the cell content.
-/// There is no separate post-flush repaint.
-/// It returns a tuple of:
-/// - `Option<(u16, u16)>`: cursor position (or `None` to hide the cursor)
-/// - `Option<PostFlush>`: escape sequences written after the cell flush (e.g. Kitty graphics protocol image data).
-///   They go inside the synchronized update block so the image appears atomically with the cell diff.
+/// The `render_fn` receives a [`Frame`] and a `&mut Vec<LinkSpan>` to populate
+/// with the frame's OSC 8 hyperlink regions (absolute viewport coordinates).
+/// Those spans are handed to the terminal before the diff so hyperlinks
+/// participate in the cell diff (emitted/cleared in lockstep with content) —
+/// no out-of-band post-flush repaint. It returns a tuple of:
+/// - `Option<(u16, u16)>` — cursor position (or `None` to hide cursor)
+/// - `Option<PostFlush>` — escape sequences to write after cell flush (e.g.
+///   Kitty graphics protocol image data). Written inside the synchronized
+///   update block so the image appears atomically with the cell diff.
+/// Paint the full-frame canvas with the active theme's `bg_base`.
+///
+/// Without this, only individual widget bands (status bar, prompt block,
+/// banners…) carry themed backgrounds and the dominant empty chat area
+/// shows the TERMINAL PROFILE's own background — so switching themes
+/// appeared to do nothing to "the background".
+///
+/// Runs before the app's render fn so every widget overrides its own
+/// cells; unstyled cells inherit the canvas. Skipped when:
+///   - minimal/terminal-native lock (canvas belongs to the terminal),
+///   - color level is None / Basic (nothing meaningful to paint; Reset
+///     would dirty the diff for zero visual change),
+///   - the theme itself uses `Reset` (terminal-native themes).
+fn paint_theme_canvas(frame: &mut Frame) {
+    if crate::theme::cache::terminal_native_locked() {
+        return;
+    }
+    let theme = crate::theme::Theme::current();
+    if !matches!(theme.bg_base, Color::Rgb(..) | Color::Indexed(_)) {
+        return;
+    }
+    let area = frame.area();
+    frame
+        .buffer_mut()
+        .set_style(area, Style::default().bg(theme.bg_base));
+}
+
 pub fn draw_frame(
     terminal: &mut PagerTerminal,
     cursor: &mut CursorState,
@@ -423,6 +453,7 @@ pub fn draw_frame(
     let mut link_spans: Vec<LinkSpan> = Vec::new();
     let (cursor_pos, post_flush_escapes) = {
         let mut frame = terminal.get_frame();
+        paint_theme_canvas(&mut frame);
         render_fn(&mut frame, &mut link_spans)
     };
     terminal.set_frame_links(&link_spans);
