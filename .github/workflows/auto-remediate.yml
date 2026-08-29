@@ -75,6 +75,17 @@ jobs:
             git config "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
               "https://github.com/"
 
+            # Guard: opencode2 must be authenticated to OpenCode Go to use the
+            # hosted opencode/hy3-free model. Fail loudly instead of hanging on a
+            # model call if the credential is missing (e.g. an unseeded fresh deploy).
+            if [ ! -s "${HOME}/.local/share/opencode/auth.json" ] || ! grep -q '"opencode-go"' "${HOME}/.local/share/opencode/auth.json" 2>/dev/null; then
+              echo "ERROR: opencode2 is not authenticated to OpenCode Go" >&2
+              echo "  (missing/empty ~/.local/share/opencode/auth.json with opencode-go credentials)." >&2
+              echo "  Seed it via the agent_harness role (opencode-go-auth.json.enc) or run" >&2
+              echo "  'opencode2 auth login' on the harness before the callback can use opencode/hy3-free." >&2
+              exit 1
+            fi
+
             # Diagnose + fix locally via the ci-auto-remediate skill.
             # --standalone runs a private server for this one-shot job (proven in
             # harness smoke test); cwd is the grok-build mirror so its
