@@ -48,10 +48,5 @@ jobs:
       - name: Install dotslash (bin/protoc is a dotslash wrapper)
         run: cargo install dotslash --locked
       - run: cargo build -p xai-grok-pager-bin --locked
-      # The self-hosted runner has a five-minute watchdog. Keep the
-      # diagnostic test pass bounded and non-blocking so a SIGTERM cannot
-      # fail an otherwise successful upstream sync.
-      - name: Run workspace tests (non-blocking)
+      - name: Run workspace tests
         run: cargo test --workspace --locked --quiet
-        timeout-minutes: 4
-        continue-on-error: true

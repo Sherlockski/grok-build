@@ -45,7 +45,6 @@ jobs:
         run: cargo build --release -p xai-grok-pager-bin --locked
       - name: Run required workspace tests
         run: cargo test --workspace --locked --quiet
-        timeout-minutes: 4
       - name: Package binary
         run: |
           tar -C target/release -czf "xai-grok-pager-linux-x64-${{ steps.revision.outputs.sha }}.tar.gz" xai-grok-pager
