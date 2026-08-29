@@ -1,0 +1,104 @@
+# auto-remediate.yml
+#
+# Failure callback for grok-build CI. When a watched workflow finishes with
+# conclusion=failure, this job runs on the grok-build self-hosted runner
+# (which shares a LAN with the agent-harness), SSHes to the harness, and invokes
+# opencode2 (model opencode/hy3-free) with the `ci-auto-remediate` skill to
+# diagnose + fix the failure in the local mirror. The harness then pushes the fix
+# and re-runs the failed workflow (fix + push + re-run autonomy).
+#
+# Scope: grok-build only. Add a grok-build deploy workflow name to the
+# `workflows:` list below once it exists.
+
+name: auto-remediate
+
+on:
+  workflow_run:
+    workflows:
+      - sync-upstream          # add "Go App Server Deploy" (grok-build) when present
+    types:
+      - completed
+
+# Needed so the harness can push to main and re-trigger the failed workflow.
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    # Only react to failures of the watched workflows.
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: [self-hosted, grok-build]
+    timeout-minutes: 45
+    concurrency:
+      group: auto-remediate-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    steps:
+      - name: Gather failure context
+        id: ctx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          echo "workflow=${{ github.event.workflow_run.name }}" >> "$GITHUB_OUTPUT"
+          # Last 200 lines of the failing run's log, base64 so it survives the SSH hand-off.
+          ERR="$(gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -n 200 | base64 -w0 || true)"
+          echo "error_b64=${ERR}" >> "$GITHUB_OUTPUT"
+
+      - name: Invoke agent-harness opencode2 (Hy3 Free) to fix
+        env:
+          HARNESS_HOST: agent-harness.lan
+          HARNESS_USER: agent
+          # Rendered on the grok-build runner by the github_runner role
+          # (personal/ansible/group_vars/github_runner.yml deploy_ssh_targets).
+          HARNESS_WRAPPER: "/opt/actions-runner-grok-build/.ssh/harness-grok-remediate-ssh"
+          GH_REMEDIATE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAILED_WF: ${{ steps.ctx.outputs.workflow }}
+          FAILED_RUN: ${{ github.event.workflow_run.id }}
+          ERR_B64: ${{ steps.ctx.outputs.error_b64 }}
+        run: |
+          set -euo pipefail
+          if [ -x "${HARNESS_WRAPPER}" ]; then
+            SSH_CMD="${HARNESS_WRAPPER}"
+          else
+            SSH_CMD="ssh -o StrictHostKeyChecking=accept-new ${HARNESS_USER}@${HARNESS_HOST}"
+          fi
+          "$SSH_CMD" bash -s <<'EOF'
+            set -euo pipefail
+            cd /srv/agents/workspaces/grok-build
+            export GITHUB_TOKEN="${GH_REMEDIATE_TOKEN}"
+
+            # Authenticate git/gh pushes and set an identity for the local commit.
+            git config user.name "Sherlockski CI"
+            git config user.email "297267003+Sherlockski@users.noreply.github.com"
+            git config "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+              "https://github.com/"
+
+            # Diagnose + fix locally via the ci-auto-remediate skill.
+            # --standalone runs a private server for this one-shot job (proven in
+            # harness smoke test); cwd is the grok-build mirror so its
+            # .agents/skills/ci-auto-remediate is auto-discovered.
+            timeout 1500 /home/agent/.opencode/bin/opencode2 run --standalone \
+              --model opencode/hy3-free --auto \
+              --title "auto-remediate: ${FAILED_WF}" -- \
+              "Use the ci-auto-remediate skill. Repo: grok-build. Failed workflow: ${FAILED_WF} (run ${FAILED_RUN}). Local path: /srv/agents/workspaces/grok-build. Failing-run log (base64): ${ERR_B64}. Self-hosted runner guest for grok-build is personal/personal-github-runner-prod (live-debug via /srv/agents/workspaces/infrastructure/scripts/ssh-as-operator.sh personal personal-github-runner-prod). Edit files + make ONE local commit on main; do NOT push and do NOT re-run — the orchestrator does that."
+
+            # Orchestrator: fix + push + re-run.
+            if git diff --quiet && git diff --cached --quiet; then
+              echo "No changes from agent; nothing to push."
+              exit 0
+            fi
+
+            # Loop guard: don't keep re-running if the watched workflow keeps failing.
+            FAILCOUNT="$(gh run list --workflow=sync-upstream.yml --status=failure \
+              --limit 5 --json databaseId 2>/dev/null | grep -c databaseId || true)"
+            if [ "${FAILCOUNT:-0}" -ge 3 ]; then
+              echo ">=3 recent sync-upstream failures; pushing fix but skipping re-run to avoid a loop."
+              git push origin "HEAD:main"
+              exit 0
+            fi
+
+            git push origin "HEAD:main"
+            gh workflow run sync-upstream.yml
+          EOF
