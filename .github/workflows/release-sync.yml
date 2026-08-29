@@ -1,0 +1,86 @@
+name: release-sync
+
+on:
+  workflow_run:
+    workflows: [sync-upstream]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    # The sync workflow can finish successfully even when its diagnostic
+    # test pass times out. Releases always rebuild and require tests below.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: self-hosted
+    steps:
+      - name: Download synced revision
+        uses: actions/download-artifact@v4
+        with:
+          name: sync-result
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read revision
+        id: revision
+        run: |
+          sha=$(cat sync-result/commit)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "tag=sync-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out synced revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.revision.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install dotslash
+        run: cargo install dotslash --locked
+      - name: Build release binary
+        run: cargo build --release -p xai-grok-pager-bin --locked
+      - name: Run required workspace tests
+        run: cargo test --workspace --locked --quiet
+        timeout-minutes: 4
+      - name: Package binary
+        run: |
+          tar -C target/release -czf "xai-grok-pager-linux-x64-${{ steps.revision.outputs.sha }}.tar.gz" xai-grok-pager
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.revision.outputs.tag }}
+          target_commitish: ${{ steps.revision.outputs.sha }}
+          name: Sync ${{ steps.revision.outputs.sha }}
+          generate_release_notes: true
+          files: xai-grok-pager-linux-x64-${{ steps.revision.outputs.sha }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Retain five sync releases
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            });
+            const stale = releases
+              .filter((release) => release.tag_name.startsWith("sync-"))
+              .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+              .slice(5);
+            for (const release of stale) {
+              await github.rest.repos.deleteRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: release.id,
+              });
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `tags/${release.tag_name}`,
+              });
+            }

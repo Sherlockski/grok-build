@@ -23,9 +23,7 @@ jobs:
           git checkout main
           if git merge-base --is-ancestor upstream/main HEAD; then
             echo "Already up-to-date"
-            exit 0
-          fi
-          if git merge-base --is-ancestor HEAD upstream/main; then
+          elif git merge-base --is-ancestor HEAD upstream/main; then
             git merge --ff-only upstream/main
           else
             # While rebasing, "theirs" is the fork commit being replayed.
@@ -38,6 +36,14 @@ jobs:
           # result never fast-forwards over origin/main — force-with-lease
           # still refuses to clobber anything pushed since checkout.
           git push --force-with-lease origin main
+          mkdir -p sync-result
+          git rev-parse HEAD > sync-result/commit
+      - name: Record synced revision
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-result
+          path: sync-result/commit
+          retention-days: 1
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install dotslash (bin/protoc is a dotslash wrapper)
         run: cargo install dotslash --locked
