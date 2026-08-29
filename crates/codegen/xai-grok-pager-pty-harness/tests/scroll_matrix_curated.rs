@@ -13,6 +13,7 @@
 
 use std::path::PathBuf;
 
+use serial_test::serial;
 use xai_grok_pager_pty_harness::pager_binary;
 use xai_grok_pager_pty_harness::scroll_matrix::{
     CellReport, CellStatus, curated, run_cell, summary_table,
@@ -65,36 +66,43 @@ async fn assert_cell_passes(cell_id: &str) {
     );
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c1_auto_g3_flood_speed100() {
     assert_cell_passes("c1_auto_g3_flood_speed100").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c2_auto_g3_flood_speed100() {
     assert_cell_passes("c2_auto_g3_flood_speed100").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c3_wheel_lines1_g1() {
     assert_cell_passes("c3_wheel_lines1_g1").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c4_auto_g10_ambiguous() {
     assert_cell_passes("c4_auto_g10_ambiguous").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c5_tmux_g9a() {
     assert_cell_passes("c5_tmux_g9a").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c5_tmux_g9b() {
     assert_cell_passes("c5_tmux_g9b").await;
 }
 
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c1_auto_g8_midstream() {
     assert_cell_passes("c1_auto_g8_midstream").await;
@@ -105,6 +113,7 @@ async fn c1_auto_g8_midstream() {
 /// tapered cap) and I-NO-DROP (finalize discards nothing) moved from the
 /// xfail set to ordinary pass rows. The cell id keeps its historical name
 /// for artifact continuity.
+#[serial]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn c1_auto_g4_jerk_xfail() {
     assert_cell_passes("c1_auto_g4_jerk_xfail").await;
