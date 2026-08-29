@@ -6,6 +6,7 @@
 //!
 //! Disk writes live in `xai_grok_shell::util::config::set_theme()` (and friends), invoked via `Effect::PersistSetting` from the dispatcher.
 
+#[cfg(test)]
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -348,10 +349,7 @@ pub fn resolve_initial_theme_no_osc11() -> ThemeKind {
     apply_initial_theme(false)
 }
 
-fn env_theme_name() -> Option<String> {
-    env_theme_name_from(&crate::host::collect_unicode_env()).map(str::to_owned)
-}
-
+#[cfg(test)]
 fn env_theme_name_from(env: &HashMap<String, String>) -> Option<&str> {
     for key in ["GROK_THEME", "LC_GROK_THEME"] {
         let Some(raw) = env
@@ -368,6 +366,7 @@ fn env_theme_name_from(env: &HashMap<String, String>) -> Option<&str> {
     None
 }
 
+#[cfg(test)]
 fn resolve_initial_theme_from(
     env_theme: Option<&str>,
     config_theme: Option<ThemeKind>,
