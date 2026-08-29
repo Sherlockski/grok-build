@@ -68,7 +68,7 @@ fn resolve_home_raw() -> Option<PathBuf> {
             return Some(PathBuf::from(v));
         }
     }
-    dirs::home_dir().map(|h| {
+    xai_dirs::home_dir().map(|h| {
         dunce::canonicalize(&h)
             .unwrap_or(h)
             .join(".grok")
