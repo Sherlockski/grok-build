@@ -28,7 +28,11 @@ jobs:
           if git merge-base --is-ancestor HEAD upstream/main; then
             git merge --ff-only upstream/main
           else
-            git rebase upstream/main
+            # While rebasing, "theirs" is the fork commit being replayed.
+            # This resolves direct conflicts in favor of the fork's features,
+            # while every non-conflicting upstream change remains untouched.
+            # (This differs from a merge, where "theirs" would be upstream.)
+            git rebase -X theirs upstream/main
           fi
           # Rebase rewrites our meta-commits (this workflow file), so the
           # result never fast-forwards over origin/main — force-with-lease
