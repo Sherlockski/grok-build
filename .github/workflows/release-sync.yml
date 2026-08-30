@@ -42,9 +42,10 @@ jobs:
       - name: Install dotslash
         run: cargo install dotslash --locked
       - name: Build release binary
-        run: cargo build --release -p xai-grok-pager-bin --locked
+        run: cargo build --release -p xai-grok-pager-bin --locked -j 2
       - name: Run required workspace tests
-        run: cargo test --workspace --locked --quiet
+        # Bound for the 7.8 GiB self-hosted runner (see sync-upstream.yml).
+        run: cargo test --workspace --locked -j 2 --quiet -- --test-threads=2
       - name: Package binary
         run: |
           tar -C target/release -czf "xai-grok-pager-linux-x64-${{ steps.revision.outputs.sha }}.tar.gz" xai-grok-pager
