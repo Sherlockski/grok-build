@@ -64,7 +64,7 @@ jobs:
           else
             SSH_CMD="ssh -o StrictHostKeyChecking=accept-new ${HARNESS_USER}@${HARNESS_HOST}"
           fi
-          "$SSH_CMD" bash -s <<'EOF'
+          "$SSH_CMD" bash -s <<EOF
             set -euo pipefail
             cd /srv/agents/workspaces/grok-build
             export GITHUB_TOKEN="${GH_REMEDIATE_TOKEN}"
@@ -72,13 +72,13 @@ jobs:
             # Authenticate git/gh pushes and set an identity for the local commit.
             git config user.name "Sherlockski CI"
             git config user.email "297267003+Sherlockski@users.noreply.github.com"
-            git config "url.https://x-access-token:${GITHUB_TOKEN}@github.com/.insteadOf" \
+            git config "url.https://x-access-token:\${GITHUB_TOKEN}@github.com/.insteadOf" \
               "https://github.com/"
 
             # Guard: opencode2 must be authenticated to OpenCode Go to use the
             # hosted opencode/hy3-free model. Fail loudly instead of hanging on a
             # model call if the credential is missing (e.g. an unseeded fresh deploy).
-            if [ ! -s "${HOME}/.local/share/opencode/auth.json" ] || ! grep -q '"opencode-go"' "${HOME}/.local/share/opencode/auth.json" 2>/dev/null; then
+            if [ ! -s "\${HOME}/.local/share/opencode/auth.json" ] || ! grep -q '"opencode-go"' "\${HOME}/.local/share/opencode/auth.json" 2>/dev/null; then
               echo "ERROR: opencode2 is not authenticated to OpenCode Go" >&2
               echo "  (missing/empty ~/.local/share/opencode/auth.json with opencode-go credentials)." >&2
               echo "  Seed it via the agent_harness role (opencode-go-auth.json.enc) or run" >&2
@@ -102,9 +102,9 @@ jobs:
             fi
 
             # Loop guard: don't keep re-running if the watched workflow keeps failing.
-            FAILCOUNT="$(gh run list --workflow=sync-upstream.yml --status=failure \
+            FAILCOUNT="\$(gh run list --workflow=sync-upstream.yml --status=failure \
               --limit 5 --json databaseId 2>/dev/null | grep -c databaseId || true)"
-            if [ "${FAILCOUNT:-0}" -ge 3 ]; then
+            if [ "\${FAILCOUNT:-0}" -ge 3 ]; then
               echo ">=3 recent sync-upstream failures; pushing fix but skipping re-run to avoid a loop."
               git push origin "HEAD:main"
               exit 0
