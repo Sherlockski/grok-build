@@ -47,6 +47,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Install dotslash (bin/protoc is a dotslash wrapper)
         run: cargo install dotslash --locked
-      - run: cargo build -p xai-grok-pager-bin --locked
+      - run: cargo build -p xai-grok-pager-bin --locked -j 2
       - name: Run workspace tests
-        run: cargo test --workspace --locked --quiet
+        # 7.8 GiB host with no swap historically OOM-killed rustc (4-5 GiB per codegen).
+        # dmesg showed 4 parallel rustc + 2 rust-lld = >7 GiB -> global OOM, job Canceled.
+        # Bound cargo and test threads; guest now has 8 GiB swap (provisioned via ssh-as-operator).
+        run: cargo test --workspace --locked -j 2 --quiet -- --test-threads=2
