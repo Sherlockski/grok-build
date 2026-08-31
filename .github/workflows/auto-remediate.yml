@@ -7,6 +7,12 @@
 # diagnose + fix the failure in the local mirror. The harness then pushes the fix
 # and re-runs the failed workflow (fix + push + re-run autonomy).
 #
+# This is the ONE harness agent that is deliberately NOT auto-approved: it runs
+# as the `ci-remediator` agent from the harness's OpenCode v2 config, which
+# allows everything inside the grok-build workspace but falls back to OpenCode's
+# defaults elsewhere (a permission "ask" is auto-rejected in this headless run).
+# Every other harness agent (codex / opencode / opencode2 / grok) runs YOLO.
+#
 # Scope: grok-build only. Add a grok-build deploy workflow name to the
 # `workflows:` list below once it exists.
 
@@ -70,7 +76,10 @@ jobs:
             export GITHUB_TOKEN="${GH_REMEDIATE_TOKEN}"
 
             # Authenticate git/gh pushes and set an identity for the local commit.
-            git config user.name "Sherlockski CI"
+            # The name MUST be the managed workspace identity ("Sherlockski"):
+            # the github-account-guard pre-commit hook refuses anything else
+            # (githubAccountGuard.name in the mirror's git config).
+            git config user.name "Sherlockski"
             git config user.email "297267003+Sherlockski@users.noreply.github.com"
             git config "url.https://x-access-token:\${GITHUB_TOKEN}@github.com/.insteadOf" \
               "https://github.com/"
@@ -86,12 +95,26 @@ jobs:
               exit 1
             fi
 
+            # The harness's role-managed opencode2 wrapper (not the bare
+            # ~/.opencode/bin/opencode2) is what points v2 at its own XDG config
+            # home, where the ci-remediator agent and the global auto-approve
+            # rules live. Bare v2 would read v1's config and find neither.
+            OPENCODE2="/home/agent/.local/bin/opencode2"
+            if [ ! -x "\${OPENCODE2}" ]; then
+              echo "ERROR: managed opencode2 wrapper missing at \${OPENCODE2}" >&2
+              echo "  Reconverge the agent-harness (agent_harness role) so OpenCode v2" >&2
+              echo "  gets its own config home; the bare binary has no ci-remediator" >&2
+              echo "  agent." >&2
+              exit 1
+            fi
+
             # Diagnose + fix locally via the ci-auto-remediate skill.
             # --standalone runs a private server for this one-shot job (proven in
             # harness smoke test); cwd is the grok-build mirror so its
             # .agents/skills/ci-auto-remediate is auto-discovered.
-            timeout 1500 /home/agent/.opencode/bin/opencode2 run --standalone \
-              --model opencode/hy3-free --auto \
+            # NOTE: no --auto here -- this agent is intentionally not YOLO.
+            timeout 1500 "\${OPENCODE2}" run --standalone \
+              --model opencode/hy3-free --agent ci-remediator \
               --title "auto-remediate: ${FAILED_WF}" -- \
               "Use the ci-auto-remediate skill. Repo: grok-build. Failed workflow: ${FAILED_WF} (run ${FAILED_RUN}). Local path: /srv/agents/workspaces/grok-build. Failing-run log (base64): ${ERR_B64}. Self-hosted runner guest for grok-build is personal/personal-github-runner-prod (live-debug via /srv/agents/workspaces/infrastructure/scripts/ssh-as-operator.sh personal personal-github-runner-prod). Edit files + make ONE local commit on main; do NOT push and do NOT re-run — the orchestrator does that."
 
