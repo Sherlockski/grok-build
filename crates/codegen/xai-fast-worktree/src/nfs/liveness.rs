@@ -518,16 +518,36 @@ fn read_marker_capped(path: &Path) -> Option<Vec<u8>> {
     Some(buf)
 }
 fn pin_exists(source: &Path, worktree_id: &str) -> Result<bool> {
-    {
-        let _ = (source, worktree_id);
-        Ok(false)
+    if !is_safe_worktree_id(worktree_id) {
+        return Ok(false);
     }
+    let pin = format!("refs/grok/worktrees/{worktree_id}");
+    let mut cmd = std::process::Command::new("git");
+    xai_tty_utils::detach_std_command(&mut cmd);
+    let status = cmd
+        .current_dir(source)
+        .args(["show-ref", "--verify", "--quiet", &pin])
+        .status()?;
+    Ok(status.success())
 }
 fn delete_pin_ref_gated(source: &Path, worktree_id: &str) -> Result<()> {
-    {
-        let _ = (source, worktree_id);
-        anyhow::bail!("pin delete requires grove")
+    if !is_safe_worktree_id(worktree_id) {
+        anyhow::bail!("invalid worktree id");
     }
+    let pin = format!("refs/grok/worktrees/{worktree_id}");
+    if !pin.starts_with("refs/grok/worktrees/") {
+        anyhow::bail!("refusing to delete non-grok pin");
+    }
+    let mut cmd = std::process::Command::new("git");
+    xai_tty_utils::detach_std_command(&mut cmd);
+    let status = cmd
+        .current_dir(source)
+        .args(["update-ref", "-d", &pin])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("failed to delete pin {pin}");
+    }
+    Ok(())
 }
 #[cfg(feature = "metadata")]
 pub fn identities_from_worktree_records(recs: &[crate::db::WorktreeRecord]) -> Vec<NfsIdentity> {

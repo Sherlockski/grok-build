@@ -1,11 +1,26 @@
 //! Fd-relative helpers + the single owned deleter used by daemon-down `rm`
 //! and `clean-artifacts`. Never a weaker sibling of `grove_git::delete_owned`.
 pub fn is_safe_worktree_id(id: &str) -> bool {
-    !id.is_empty()
-        && !id.starts_with('.')
-        && !id.contains('/')
-        && !id.contains('\\')
-        && !id.contains('\0')
+    if id.is_empty()
+        || id.starts_with('.')
+        || id.contains('/')
+        || id.contains('\\')
+        || id.contains('\0')
+    {
+        return false;
+    }
+    // Reject whitespace/control and non-alphanumeric/._- to prevent
+    // newline/space injection (test expects "wt name\nnewline-deadbeef" invalid).
+    if id.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+    {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
