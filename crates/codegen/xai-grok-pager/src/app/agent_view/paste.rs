@@ -2022,6 +2022,9 @@ pub(super) mod paste_key_tests {
         let placement = tool_media_placement(path.clone());
         assert!(agent.build_inline_media_escapes(&placement).is_none());
         assert!(agent.inline_media_load_failed.contains_key(&path));
+        // Ensure ctime advances past coarse clock resolution so the
+        // same-length same-mtime rewrite is still detected via inode/ctime.
+        std::thread::sleep(std::time::Duration::from_millis(10));
         std::fs::write(&path, &png).unwrap();
         pin_mtime(&path);
         assert!(
