@@ -2356,6 +2356,29 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
         Err(_) => return 0,
     };
     let all_names: HashSet<std::ffi::OsString> = entries.iter().map(|e| e.file_name()).collect();
+    // Precompute ages before any deletions: temp↔sidecar pairs where the
+    // sidecar is deleted first would otherwise make pair_age for the temp
+    // fall back to mtime (fresh) and keep an expired temp.
+    let mut ages: std::collections::HashMap<std::ffi::OsString, Duration> =
+        std::collections::HashMap::new();
+    for entry in &entries {
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        let name = entry.file_name();
+        if metadata.is_dir() && name == "scratch" {
+            continue;
+        }
+        let path = entry.path();
+        let age = pair_age(&path, &name, &all_names).unwrap_or_else(|| {
+            metadata
+                .modified()
+                .ok()
+                .and_then(|m| m.elapsed().ok())
+                .unwrap_or(Duration::MAX)
+        });
+        ages.insert(name, age);
+    }
     let mut cleaned = 0u64;
     let mut cleaned_bytes = 0u64;
     for entry in &entries {
@@ -2371,13 +2394,7 @@ fn cleanup_queue_dir(queue_dir: &Path, max_age: Duration, stats: Option<&UploadQ
             cleaned_bytes += sub_bytes;
             continue;
         }
-        let age = pair_age(&path, &name, &all_names).unwrap_or_else(|| {
-            metadata
-                .modified()
-                .ok()
-                .and_then(|m| m.elapsed().ok())
-                .unwrap_or(Duration::MAX)
-        });
+        let age = ages.get(&name).copied().unwrap_or(Duration::MAX);
         if age <= max_age {
             continue;
         }
