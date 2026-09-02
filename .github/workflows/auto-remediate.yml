@@ -3,7 +3,7 @@
 # Failure callback for grok-build CI. When a watched workflow finishes with
 # conclusion=failure, this job runs on the grok-build self-hosted runner
 # (which shares a LAN with the agent-harness), SSHes to the harness, and invokes
-# opencode2 (model opencode/hy3-free) with the `ci-auto-remediate` skill to
+# opencode2 (model opencode/muse-spark-1.2-free) with the `ci-auto-remediate` skill to
 # diagnose + fix the failure in the local mirror. The harness then pushes the fix
 # and re-runs the failed workflow (fix + push + re-run autonomy).
 #
@@ -46,7 +46,7 @@ jobs:
           ERR="$(gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -n 200 | base64 -w0 || true)"
           echo "error_b64=${ERR}" >> "$GITHUB_OUTPUT"
 
-      - name: Invoke agent-harness opencode2 (Hy3 Free) to fix
+      - name: Invoke agent-harness opencode2 (Muse Spark 1.2 Free) to fix
         env:
           HARNESS_HOST: agent-harness.lan
           HARNESS_USER: agent
@@ -76,13 +76,13 @@ jobs:
               "https://github.com/"
 
             # Guard: opencode2 must be authenticated to OpenCode Go to use the
-            # hosted opencode/hy3-free model. Fail loudly instead of hanging on a
+            # hosted opencode/muse-spark-1.2-free model. Fail loudly instead of hanging on a
             # model call if the credential is missing (e.g. an unseeded fresh deploy).
             if [ ! -s "\${HOME}/.local/share/opencode/auth.json" ] || ! grep -q '"opencode-go"' "\${HOME}/.local/share/opencode/auth.json" 2>/dev/null; then
               echo "ERROR: opencode2 is not authenticated to OpenCode Go" >&2
               echo "  (missing/empty ~/.local/share/opencode/auth.json with opencode-go credentials)." >&2
               echo "  Seed it via the agent_harness role (opencode-go-auth.json.enc) or run" >&2
-              echo "  'opencode2 auth login' on the harness before the callback can use opencode/hy3-free." >&2
+              echo "  'opencode2 auth login' on the harness before the callback can use opencode/muse-spark-1.2-free." >&2
               exit 1
             fi
 
@@ -91,7 +91,7 @@ jobs:
             # harness smoke test); cwd is the grok-build mirror so its
             # .agents/skills/ci-auto-remediate is auto-discovered.
             timeout 1500 /home/agent/.opencode/bin/opencode2 run --standalone \
-              --model opencode/hy3-free --auto \
+              --model opencode/muse-spark-1.2-free --auto \
               --title "auto-remediate: ${FAILED_WF}" -- \
               "Use the ci-auto-remediate skill. Repo: grok-build. Failed workflow: ${FAILED_WF} (run ${FAILED_RUN}). Local path: /srv/agents/workspaces/grok-build. Failing-run log (base64): ${ERR_B64}. Self-hosted runner guest for grok-build is personal/personal-github-runner-prod (live-debug via /srv/agents/workspaces/infrastructure/scripts/ssh-as-operator.sh personal personal-github-runner-prod). Edit files + make ONE local commit on main; do NOT push and do NOT re-run — the orchestrator does that."
 

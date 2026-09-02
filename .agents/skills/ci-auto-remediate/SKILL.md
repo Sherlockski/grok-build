@@ -83,7 +83,7 @@ orchestrator (`auto-remediate.yml`) does that with a scoped token.
 6. **Commit locally only.** Stage the minimal change and commit on `main`:
    ```bash
    git add -A
-   git commit -m "fix(ci): <root cause> — auto-remediated by opencode/hy3-free"
+   git commit -m "fix(ci): <root cause> — auto-remediated by opencode/muse-spark-1.2-free"
    ```
    The orchestrator pushes `HEAD:main` and re-runs the failed workflow.
 
