@@ -243,7 +243,16 @@ fn fake_standalone_facts_compose_through_shared_view() {
     );
     let report = collect_report_with(snapshot);
 
-    assert_eq!(report.issue_count(), 1);
+    // Voice probe depends on host audio device (xai_grok_voice::input_device_info)
+    // and would add a second issue (voice/no-input-device) on runners without a mic.
+    // This composition test is about tmux/clipboard, so ignore voice for counting.
+    let issue_count_without_voice = report
+        .findings
+        .iter()
+        .filter(|f| f.disposition == FindingDisposition::Issue)
+        .filter(|f| f.id != DiagnosticId::new("voice", "no-input-device"))
+        .count();
+    assert_eq!(issue_count_without_voice, 1);
     assert!(
         report
             .findings
